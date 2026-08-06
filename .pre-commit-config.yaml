@@ -1,0 +1,12 @@
+repos:
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.12.2
+    hooks:
+      - id: golangci-lint-config-verify
+      - id: golangci-lint-fmt
+      - id: golangci-lint-full
+
+  - repo: https://github.com/godaddy/tartufo
+    rev: v6.0.0
+    hooks:
+      - id: tartufo

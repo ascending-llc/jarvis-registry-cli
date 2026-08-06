@@ -1,0 +1,113 @@
+version: "2"
+run:
+  modules-download-mode: readonly
+output:
+  sort-order:
+    - file
+linters:
+  default: none
+  enable:
+    - asasalint
+    - asciicheck
+    - bidichk
+    - copyloopvar
+    - decorder
+    - depguard
+    - dogsled
+    - durationcheck
+    - errcheck
+    - errname
+    - errorlint
+    - exhaustive
+    - forbidigo
+    - gocheckcompilerdirectives
+    - gochecknoinits
+    - gosec
+    - govet
+    - ineffassign
+    - intrange
+    - musttag
+    - nestif
+    - nlreturn
+    - nolintlint
+    - sloglint
+    - staticcheck
+    - thelper
+    - unused
+    - wsl_v5
+  settings:
+    asasalint:
+      use-builtin-exclusions: true
+    decorder:
+      disable-dec-order-check: false
+      disable-init-func-first-check: false
+      disable-dec-num-check: false
+      disable-type-dec-num-check: false
+      disable-const-dec-num-check: false
+      disable-var-dec-num-check: false
+    depguard:
+      rules:
+        avoid-list:
+          list-mode: lax
+          deny:
+            - pkg: github.com/aws/aws-sdk-go$
+              desc: v1 of AWS Go SDK reaches EOL on July 31, 2025.
+
+            - pkg: io/ioutil
+              desc: Deprecated since Go 1.16. Use os and io instead.
+
+            - pkg: github.com/pkg/errors
+              desc: This package has been archived. Use standard library package errors instead.
+
+            - pkg: github.com/lib/pq
+              desc: This package has gone into maintenance only mode. Use its new version instead.
+
+            - pkg: github.com/bouk/monkey
+              desc: Use methodical dependency injection instead of monkeypatching.
+
+            - pkg: github.com/agiledragon/gomonkey
+              desc: Use methodical dependency injection instead of monkeypatching.
+
+            - pkg: github.com/gin-gonic/gin
+              desc: This web framework doesn't fully support the http.Handler interface.
+
+            - pkg: github.com/labstack/echo
+              desc: This web framework doesn't fully support the http.Handler interface.
+
+            - pkg: github.com/gofiber/fiber
+              desc: This web framework doesn't fully support the http.Handler interface.
+    errcheck:
+      check-type-assertions: true
+    govet:
+      enable-all: true
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    sloglint:
+      attr-only: true
+      no-global: all
+      context: all
+      static-msg: true
+    wsl_v5:
+      allow-first-in-block: false
+      allow-whole-block: true
+      branch-max-lines: 4
+  exclusions:
+    generated: lax
+    paths:
+      - adhoc/
+
+issues:
+  max-issues-per-linter: 0      
+  max-same-issues: 0
+formatters:
+  enable:
+    - gci
+    - gofmt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - localmodule
+    
