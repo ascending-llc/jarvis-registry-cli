@@ -2,3 +2,7 @@
 /jr-cli
 /jarvis-registry
 /jarvis-registry-cli
+/*.json
+/cmd/jr-cli/
+/config.yaml
+/config.yml

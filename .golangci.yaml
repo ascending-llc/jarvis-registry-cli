@@ -94,6 +94,37 @@ linters:
       branch-max-lines: 4
   exclusions:
     generated: lax
+    rules:
+      - path: '^auth/auth\.go$'
+        linters:
+          - gosec
+        # this is an OAuth endpoint URL path, not a credential value
+        text: 'G101: Potential hardcoded credentials'
+      - path: '^auth/auth\.go$'
+        linters:
+          - gosec
+        # only marshaled to hand off to creds.Write, which stores it in the OS keyring; never logged or written to disk
+        text: 'G117: Marshaled struct field "AccessToken" \(JSON key "access_token"\) matches secret pattern'
+      - path: '^skills/client\.go$'
+        linters:
+          - staticcheck
+        # "Registry" is the proper-noun product name, capitalized consistently elsewhere in this codebase
+        text: 'ST1005: error strings should not be capitalized'
+      - path: '^skills/manifest\.go$'
+        linters:
+          - gosec
+        # skill-lock.json holds only skill id/name/version metadata, no secrets; 0644/0444 is intentional so it stays world-readable but toggled read-only
+        text: 'G302: Expect file permissions to be 0600 or less'
+      - path: '^skills/(manifest|skills)\.go$'
+        linters:
+          - gosec
+        # manifest and synced SKILL.md files hold no secrets; world-readability is intended
+        text: 'G306: Expect WriteFile permissions to be 0600 or less'
+      - path: '^skills/skills\.go$'
+        linters:
+          - gosec
+        # synced skills folder holds only downloaded SKILL.md docs, no secrets
+        text: 'G301: Expect directory permissions to be 0750 or less'
     paths:
       - adhoc/
 
