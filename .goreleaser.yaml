@@ -41,5 +41,6 @@ brews:
     directory: Formula
     homepage: "https://github.com/ascending-llc/jarvis-registry-cli"
     description: "Companion CLI for the Jarvis Registry platform."
+    license: "Apache-2.0"
     test: |
       system "#{bin}/jarvis-registry", "--version"
