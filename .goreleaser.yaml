@@ -1,0 +1,45 @@
+version: 2
+project_name: jarvis-registry
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/jarvis-registry
+    binary: jarvis-registry
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: ascending-llc
+    name: jarvis-registry
+  token: "{{ .Env.JARVIS_REGISTRY_RELEASE_TOKEN }}"
+  target_commitish: main
+  name_template: "Jarvis Registry CLI {{ .Tag }}"
+  make_latest: false
+
+brews:
+  - name: jarvis-registry
+    repository:
+      owner: ascending-llc
+      name: homebrew-jarvis
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/ascending-llc/jarvis-registry-cli"
+    description: "Companion CLI for the Jarvis Registry platform."
+    test: |
+      system "#{bin}/jarvis-registry", "--version"
