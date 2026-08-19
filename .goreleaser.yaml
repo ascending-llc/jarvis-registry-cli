@@ -27,7 +27,7 @@ release:
   github:
     owner: ascending-llc
     name: jarvis-registry
-  token: "{{ .Env.JARVIS_REGISTRY_RELEASE_TOKEN }}"
+    token: "{{ .Env.JARVIS_REGISTRY_RELEASE_TOKEN }}"
   target_commitish: main
   name_template: "Jarvis Registry CLI {{ .Tag }}"
   make_latest: false
