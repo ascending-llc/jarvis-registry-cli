@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "cli-v*"
+      - "v*"
 
 permissions:
   contents: write
@@ -30,5 +30,19 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          JARVIS_REGISTRY_RELEASE_TOKEN: ${{ secrets.GH_COPILOT_KEY }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.GH_COPILOT_KEY }}
+
+      - name: Mirror release to jarvis-registry
+        env:
+          GH_TOKEN: ${{ secrets.GH_COPILOT_KEY }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          MIRROR_TAG="cli-v${VERSION}"
+          gh release create "$MIRROR_TAG" \
+            --repo ascending-llc/jarvis-registry \
+            --target main \
+            --title "Jarvis Registry CLI ${TAG}" \
+            --notes "Companion CLI release. Full release notes: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}" \
+            --latest=false \
+            dist/*.tar.gz dist/*.zip dist/checksums.txt
