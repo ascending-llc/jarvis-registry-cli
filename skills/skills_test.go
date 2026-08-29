@@ -84,59 +84,7 @@ func TestSyncCommandRun(t *testing.T) {
 	defer ts.Close()
 
 	t.Run("sync from non-trivial initial state", func(t *testing.T) {
-		var err error
-
-		mockHomeDir, err := os.MkdirTemp("", "mock-user-home-dir")
-		require.NoError(t, err, "should be able to create temp directory as the mocked user home directory")
-
-		mockSkillsDir, err := os.MkdirTemp("", "mock-skills-dir")
-		require.NoError(t, err, "should be able to create temp directory as the mocked skills directory")
-
-		defer func() {
-			_ = os.RemoveAll(mockHomeDir)
-
-			_ = os.RemoveAll(mockSkillsDir)
-		}()
-
-		cmd := SyncCommand{}
-
-		originalHome := os.Getenv("HOME")
-		originalUserProfile := os.Getenv("USERPROFILE")
-
-		err = os.Setenv("HOME", mockHomeDir)
-		require.NoError(t, err, "should be able to set HOME env var so os.UserHomeDir returns the mocked registry directory")
-
-		err = os.Setenv("USERPROFILE", mockHomeDir)
-		require.NoError(t, err, "should be able to set USERPROFILE env var so os.UserHomeDir returns the mocked registry directory on Windows")
-
-		defer func() {
-			_ = os.Setenv("HOME", originalHome)
-
-			_ = os.Setenv("USERPROFILE", originalUserProfile)
-		}()
-
-		err = cmd.BeforeReset()
-		require.NoError(t, err, "should be able to call SyncCommand.BeforeReset without error")
-
-		mockLoadFunc := func(registryDir string) (cfg.Config, error) {
-			var config cfg.Config
-
-			config.Registry.BaseUrl = ts.URL
-
-			config.Local.Dest = mockSkillsDir
-
-			return config, nil
-		}
-
-		cmd.configLoadFunc = mockLoadFunc
-
-		err = cmd.AfterApply()
-		require.NoError(t, err, "should be able to call SyncCommand.AfterApply without error")
-
-		registryDir := filepath.Join(mockHomeDir, registryDirName)
-
-		err = os.MkdirAll(registryDir, 0755)
-		require.NoError(t, err, "should be able to create the mocked registry directory")
+		cmd, mockSkillsDir, registryDir := newTestSyncSetup(t, ts)
 
 		initialManifest, err := os.ReadFile(filepath.Join("testdata", "initial-state.skill-lock.json"))
 		require.NoError(t, err, "should be able to read the initial-state skill-lock.json fixture")
@@ -147,62 +95,131 @@ func TestSyncCommandRun(t *testing.T) {
 		err = os.CopyFS(mockSkillsDir, os.DirFS(filepath.Join("testdata", "initial-state")))
 		require.NoError(t, err, "should be able to copy the initial-state fixture directory tree to the mocked skills directory")
 
-		cmd.tp = MockTokenProvider{}
-
 		err = cmd.Run()
 		require.NoError(t, err, "should be able to call SyncCommand.Run without error")
 
-		mockSkillsEntries, err := os.ReadDir(mockSkillsDir)
-		require.NoError(t, err, "should be able to list the mocked skills directory after sync")
-
-		serverResponseDir := filepath.Join("testdata", "server-response")
-
-		serverResponseEntries, err := os.ReadDir(serverResponseDir)
-		require.NoError(t, err, "should be able to list the server-response testdata directory")
-
-		var expectedSkillNames []string
-
-		for _, e := range serverResponseEntries {
-			if e.IsDir() {
-				expectedSkillNames = append(expectedSkillNames, e.Name())
-			}
-		}
-
-		assert.Len(t, mockSkillsEntries, len(expectedSkillNames), "mockSkillsDir should contain exactly as many skill folders as skills/testdata/server-response has subfolders")
-
-		var actualSkillNames []string
-
-		for _, e := range mockSkillsEntries {
-			actualSkillNames = append(actualSkillNames, e.Name())
-		}
-
-		assert.ElementsMatch(t, expectedSkillNames, actualSkillNames, "mockSkillsDir should contain folders with the same names as the subfolders of skills/testdata/server-response")
-
-		for _, name := range expectedSkillNames {
-			assertSkillFolderMatches(t, filepath.Join(serverResponseDir, name), filepath.Join(mockSkillsDir, name))
-		}
-
-		actualManifestBytes, err := os.ReadFile(filepath.Join(registryDir, manifestFileName))
-		require.NoError(t, err, "should be able to read the skill-lock.json file after sync")
-
-		var actualManifest ManifestV1
-
-		err = json.Unmarshal(actualManifestBytes, &actualManifest)
-		require.NoError(t, err, "should be able to unmarshal the skill-lock.json file after sync")
-
-		expectedManifestBytes, err := os.ReadFile(filepath.Join("testdata", "final-state.skill-lock.json"))
-		require.NoError(t, err, "should be able to read the final-state skill-lock.json fixture")
-
-		var expectedManifest ManifestV1
-
-		err = json.Unmarshal(expectedManifestBytes, &expectedManifest)
-		require.NoError(t, err, "should be able to unmarshal the final-state skill-lock.json fixture")
-
-		sort.Slice(actualManifest.Skills, func(i, j int) bool { return actualManifest.Skills[i].Id < actualManifest.Skills[j].Id })
-		sort.Slice(expectedManifest.Skills, func(i, j int) bool { return expectedManifest.Skills[i].Id < expectedManifest.Skills[j].Id })
-
-		assert.Equal(t, expectedManifest, actualManifest, "skill-lock.json should match the final-state fixture regardless of key order or skills array order")
+		assertSyncResult(t, mockSkillsDir, registryDir)
 	})
+
+	t.Run("sync from empty initial state", func(t *testing.T) {
+		cmd, mockSkillsDir, registryDir := newTestSyncSetup(t, ts)
+
+		err := cmd.Run()
+		require.NoError(t, err, "should be able to call SyncCommand.Run without error")
+
+		assertSyncResult(t, mockSkillsDir, registryDir)
+	})
+}
+
+func newTestSyncSetup(t *testing.T, ts *httptest.Server) (cmd SyncCommand, mockSkillsDir, registryDir string) {
+	t.Helper()
+
+	mockHomeDir, err := os.MkdirTemp("", "mock-user-home-dir")
+	require.NoError(t, err, "should be able to create temp directory as the mocked user home directory")
+
+	mockSkillsDir, err = os.MkdirTemp("", "mock-skills-dir")
+	require.NoError(t, err, "should be able to create temp directory as the mocked skills directory")
+
+	originalHome := os.Getenv("HOME")
+	originalUserProfile := os.Getenv("USERPROFILE")
+
+	err = os.Setenv("HOME", mockHomeDir)
+	require.NoError(t, err, "should be able to set HOME env var so os.UserHomeDir returns the mocked registry directory")
+
+	err = os.Setenv("USERPROFILE", mockHomeDir)
+	require.NoError(t, err, "should be able to set USERPROFILE env var so os.UserHomeDir returns the mocked registry directory on Windows")
+
+	t.Cleanup(func() {
+		_ = os.RemoveAll(mockHomeDir)
+
+		_ = os.RemoveAll(mockSkillsDir)
+
+		_ = os.Setenv("HOME", originalHome)
+
+		_ = os.Setenv("USERPROFILE", originalUserProfile)
+	})
+
+	cmd = SyncCommand{}
+
+	err = cmd.BeforeReset()
+	require.NoError(t, err, "should be able to call SyncCommand.BeforeReset without error")
+
+	cmd.configLoadFunc = func(string) (cfg.Config, error) {
+		var config cfg.Config
+
+		config.Registry.BaseUrl = ts.URL
+
+		config.Local.Dest = mockSkillsDir
+
+		return config, nil
+	}
+
+	err = cmd.AfterApply()
+	require.NoError(t, err, "should be able to call SyncCommand.AfterApply without error")
+
+	registryDir = filepath.Join(mockHomeDir, registryDirName)
+
+	err = os.MkdirAll(registryDir, 0755)
+	require.NoError(t, err, "should be able to create the mocked registry directory")
+
+	cmd.tp = MockTokenProvider{}
+
+	return cmd, mockSkillsDir, registryDir
+}
+
+func assertSyncResult(t *testing.T, mockSkillsDir, registryDir string) {
+	t.Helper()
+
+	mockSkillsEntries, err := os.ReadDir(mockSkillsDir)
+	require.NoError(t, err, "should be able to list the mocked skills directory after sync")
+
+	serverResponseDir := filepath.Join("testdata", "server-response")
+
+	serverResponseEntries, err := os.ReadDir(serverResponseDir)
+	require.NoError(t, err, "should be able to list the server-response testdata directory")
+
+	var expectedSkillNames []string
+
+	for _, e := range serverResponseEntries {
+		if e.IsDir() {
+			expectedSkillNames = append(expectedSkillNames, e.Name())
+		}
+	}
+
+	assert.Len(t, mockSkillsEntries, len(expectedSkillNames), "mockSkillsDir should contain exactly as many skill folders as skills/testdata/server-response has subfolders")
+
+	var actualSkillNames []string
+
+	for _, e := range mockSkillsEntries {
+		actualSkillNames = append(actualSkillNames, e.Name())
+	}
+
+	assert.ElementsMatch(t, expectedSkillNames, actualSkillNames, "mockSkillsDir should contain folders with the same names as the subfolders of skills/testdata/server-response")
+
+	for _, name := range expectedSkillNames {
+		assertSkillFolderMatches(t, filepath.Join(serverResponseDir, name), filepath.Join(mockSkillsDir, name))
+	}
+
+	actualManifestBytes, err := os.ReadFile(filepath.Join(registryDir, manifestFileName))
+	require.NoError(t, err, "should be able to read the skill-lock.json file after sync")
+
+	var actualManifest ManifestV1
+
+	err = json.Unmarshal(actualManifestBytes, &actualManifest)
+	require.NoError(t, err, "should be able to unmarshal the skill-lock.json file after sync")
+
+	expectedManifestBytes, err := os.ReadFile(filepath.Join("testdata", "final-state.skill-lock.json"))
+	require.NoError(t, err, "should be able to read the final-state skill-lock.json fixture")
+
+	var expectedManifest ManifestV1
+
+	err = json.Unmarshal(expectedManifestBytes, &expectedManifest)
+	require.NoError(t, err, "should be able to unmarshal the final-state skill-lock.json fixture")
+
+	sort.Slice(actualManifest.Skills, func(i, j int) bool { return actualManifest.Skills[i].Id < actualManifest.Skills[j].Id })
+	sort.Slice(expectedManifest.Skills, func(i, j int) bool { return expectedManifest.Skills[i].Id < expectedManifest.Skills[j].Id })
+
+	assert.Equal(t, expectedManifest, actualManifest, "skill-lock.json should match the final-state fixture regardless of key order or skills array order")
 }
 
 func assertSkillFolderMatches(t *testing.T, expectedDir, actualDir string) {

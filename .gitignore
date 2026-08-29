@@ -6,3 +6,4 @@
 /cmd/jr-cli/
 /config.yaml
 /config.yml
+/coverage.out
