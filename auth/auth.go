@@ -17,6 +17,10 @@ import (
 )
 
 type (
+	// RegistryTokenResolver resolves a Jarvis Registry access token,
+	// performing an OAuth device grant when no cached token exists and
+	// transparently refreshing an expired one. Resolved tokens are cached
+	// in the OS keyring via creds.KeyringReadWriter.
 	RegistryTokenResolver struct {
 		flow          *oauth.Flow
 		logger        logging.Logger
@@ -26,6 +30,8 @@ type (
 		scopes        []string
 	}
 
+	// StoredTokens is the JSON representation of the OAuth tokens cached
+	// in the OS keyring.
 	StoredTokens struct {
 		LastUpdate   time.Time `json:"last_update,omitzero"`
 		AccessToken  string    `json:"access_token"`
@@ -47,6 +53,10 @@ const (
 	expiration = time.Minute * 59
 )
 
+// NewRegistryTokenResolver builds a RegistryTokenResolver for the Registry
+// at baseUrl, requesting the given OAuth scopes. logger receives
+// diagnostic messages for non-fatal failures, such as failing to cache a
+// newly obtained token.
 func NewRegistryTokenResolver(baseUrl string, scopes []string, logger logging.Logger) RegistryTokenResolver {
 	baseUrl = strings.TrimSuffix(baseUrl, "/")
 
@@ -70,6 +80,11 @@ func NewRegistryTokenResolver(baseUrl string, scopes []string, logger logging.Lo
 	return r
 }
 
+// GetAccessToken returns a valid Registry access token. It prefers a
+// cached, unexpired token; failing that, it refreshes a cached token via
+// the OAuth refresh flow; and as a last resort, it performs a full OAuth
+// device flow. Successfully obtained tokens are cached in the OS keyring
+// for reuse.
 func (r RegistryTokenResolver) GetAccessToken() (string, error) {
 	var st StoredTokens
 
@@ -117,6 +132,10 @@ func (r RegistryTokenResolver) GetAccessToken() (string, error) {
 	return "", err
 }
 
+// deviceFlow runs the OAuth device grant, populating st with the
+// resulting tokens. Caching the tokens in the OS keyring is best-effort:
+// a caching failure is logged, not returned, so a successful token
+// exchange still succeeds even if it can't be persisted.
 func (r RegistryTokenResolver) deviceFlow(st *StoredTokens) error {
 	resp, err := r.flow.DeviceFlow()
 	if err != nil {
@@ -141,6 +160,10 @@ func (r RegistryTokenResolver) deviceFlow(st *StoredTokens) error {
 	return nil
 }
 
+// refreshFlow exchanges refreshToken for a new access/refresh token pair
+// via the OAuth refresh grant, populating st with the result. As with
+// deviceFlow, caching the refreshed tokens in the OS keyring is
+// best-effort: a caching failure is logged, not returned.
 func (r RegistryTokenResolver) refreshFlow(refreshToken string, st *StoredTokens) error {
 	values := url.Values{
 		"client_id":     {clientId},

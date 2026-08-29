@@ -16,10 +16,15 @@ import (
 )
 
 type (
+	// TokenProvider resolves a Registry access token for SyncCommand.
 	TokenProvider interface {
 		GetAccessToken() (string, error)
 	}
 
+	// SyncCommand implements the "sync-skills" subcommand: it reconciles
+	// the local skills folder against the skills available to the
+	// caller on the Registry, creating, updating, and deleting local
+	// skill folders as needed.
 	SyncCommand struct {
 		userHomeDir    string
 		registryDir    string
@@ -32,6 +37,8 @@ type (
 		mrw            ManifestReadWriter
 	}
 
+	// SyncSpec describes one skill's local and remote state, as compared
+	// by SyncCommand to decide whether to create, update, or delete it.
 	SyncSpec struct {
 		Id            string
 		LocalName     string
@@ -40,6 +47,8 @@ type (
 		RemoteVersion int
 	}
 
+	// SyncFn creates or updates the local copy of the skill described by
+	// spec and returns its resulting metadata.
 	SyncFn func(SyncSpec) (Metadata, error)
 )
 
@@ -53,6 +62,8 @@ const (
 	concurrency = 5
 )
 
+// BeforeReset sets defaults for SyncCommand that don't depend on parsed
+// flags: the user's home directory, the config loader, and the logger.
 func (c *SyncCommand) BeforeReset() (err error) {
 	if c.userHomeDir, err = os.UserHomeDir(); err != nil {
 		return fmt.Errorf("could not locate user home directory: %s", err.Error())
@@ -65,6 +76,9 @@ func (c *SyncCommand) BeforeReset() (err error) {
 	return nil
 }
 
+// AfterApply derives SyncCommand's remaining dependencies from the loaded
+// config: the registry directory, destination folder, Registry base URL,
+// and token provider.
 func (c *SyncCommand) AfterApply() (err error) {
 	c.registryDir = filepath.Join(c.userHomeDir, registryDirName)
 
@@ -82,6 +96,10 @@ func (c *SyncCommand) AfterApply() (err error) {
 	return nil
 }
 
+// Run resolves a Registry access token, then reconciles the local skills
+// folder against the Registry: skills no longer accessible are deleted,
+// existing skills are updated in place, and new skills are created,
+// before the sync manifest is rewritten to reflect the new state.
 func (c *SyncCommand) Run() (err error) {
 	// initialize the final two dependencies c.client and c.mrw
 	token, err := c.tp.GetAccessToken()
@@ -238,6 +256,12 @@ func (c *SyncCommand) createOne(spec SyncSpec) (Metadata, error) {
 	return Metadata{Id: spec.Id, Name: spec.RemoteName, Version: spec.RemoteVersion}, nil
 }
 
+// updateOne brings the local copy of a skill that exists both locally and
+// remotely up to date. It re-fetches and rewrites the skill's folder
+// whenever the local name or version differs from the remote, or when the
+// expected local folder is missing, unreadable, or not a directory —
+// treating any such stat anomaly as needing a refresh. Otherwise it is a
+// no-op.
 func (c *SyncCommand) updateOne(spec SyncSpec) (Metadata, error) {
 	var needChange bool
 

@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// DefaultClient is the shared HTTP client used for outbound Registry and
+// OAuth requests. It is tuned with a 5-second timeout and a higher
+// per-host idle connection limit than http.DefaultClient.
 var DefaultClient = &http.Client{
 	Timeout:   5 * time.Second,
 	Transport: newDefaultTransport(),

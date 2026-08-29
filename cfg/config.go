@@ -14,6 +14,8 @@ import (
 )
 
 type (
+	// Config is the CLI's on-disk configuration, loaded by Load from
+	// config.yaml or config.yml in the Registry directory.
 	Config struct {
 		Registry struct {
 			BaseUrl string `mapstructure:"base_url"`
@@ -31,6 +33,11 @@ type (
 // of which OS happens to be running it.
 var homeTokenPattern = regexp.MustCompile(`\$(?:HOME|USERPROFILE)\b|\$\{(?:HOME|USERPROFILE)\}|%USERPROFILE%`)
 
+// Load reads config.yaml (or config.yml) from registryDir, unmarshals it
+// into a Config, and validates and resolves its fields — expanding
+// Local.Dest to an absolute path and normalizing Registry.BaseUrl. It
+// returns an error if neither file exists, the file cannot be parsed, or
+// validation fails.
 func Load(registryDir string) (config Config, err error) {
 	v := viper.New()
 

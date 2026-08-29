@@ -10,10 +10,14 @@ import (
 )
 
 type (
+	// ManifestReadWriter reads and writes the local sync manifest file
+	// that records which skills were last synced to the destination
+	// folder.
 	ManifestReadWriter struct {
 		path string
 	}
 
+	// ManifestV1 is the on-disk schema of the sync manifest file.
 	ManifestV1 struct {
 		Description   string     `json:"description"`
 		Skills        []Metadata `json:"skills"`
@@ -29,10 +33,14 @@ const (
 	manifestDescription = "Manifest file for Jarvis Registry skill sync-down."
 )
 
+// NewManifestReadWriter returns a ManifestReadWriter for the manifest file
+// inside registryDir.
 func NewManifestReadWriter(registryDir string) ManifestReadWriter {
 	return ManifestReadWriter{path: filepath.Join(registryDir, manifestFileName)}
 }
 
+// ReadSkills returns the skills recorded in the manifest file, or nil if
+// the file does not exist.
 func (mrw ManifestReadWriter) ReadSkills() ([]Metadata, error) {
 	var m ManifestV1
 
@@ -55,6 +63,8 @@ func (mrw ManifestReadWriter) ReadSkills() ([]Metadata, error) {
 	return m.Skills, nil
 }
 
+// WriteManifest overwrites the manifest file with skills, marking the
+// file read-only afterward.
 func (mrw ManifestReadWriter) WriteManifest(skills []Metadata) error {
 	m := ManifestV1{
 		SchemaVersion: manifestSchemaVersion,

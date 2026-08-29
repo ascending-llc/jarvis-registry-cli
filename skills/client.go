@@ -13,6 +13,7 @@ import (
 )
 
 type (
+	// Client is a Registry API client for listing and fetching skills.
 	Client struct {
 		scheme      string
 		host        string
@@ -20,16 +21,20 @@ type (
 		accessToken string
 	}
 
+	// Metadata identifies a skill and its current version.
 	Metadata struct {
 		Id      string `json:"id"`
 		Name    string `json:"name"`
 		Version int    `json:"version"`
 	}
 
+	// ListResponse is the decoded response body of a list-skills request.
 	ListResponse struct {
 		Skills []Metadata `json:"skills"`
 	}
 
+	// Content is the decoded response body of a get-skill-content
+	// request.
 	Content struct {
 		Id   string `json:"id"`
 		Name string `json:"name"`
@@ -38,9 +43,13 @@ type (
 )
 
 var (
+	// ErrFailureStatusCode indicates the Registry responded with a
+	// non-200 status code.
 	ErrFailureStatusCode = errors.New("Registry request returned non-200 status code")
 )
 
+// NewClient returns a Client for the Registry at registryUrl,
+// authenticating requests with token.
 func NewClient(registryUrl string, token string) (Client, error) {
 	registryUrl = strings.TrimSuffix(registryUrl, "/")
 
@@ -109,6 +118,7 @@ func (c Client) checkStatusCode(resp *http.Response) error {
 	return nil
 }
 
+// ListSkills returns the metadata of every skill the caller has access to.
 func (c Client) ListSkills() ([]Metadata, error) {
 	req, err := c.newListSkillsRequest()
 	if err != nil {
@@ -135,6 +145,7 @@ func (c Client) ListSkills() ([]Metadata, error) {
 	return listResp.Skills, nil
 }
 
+// GetSkillContent returns the content of the skill identified by skillId.
 func (c Client) GetSkillContent(skillId string) (Content, error) {
 	req, err := c.newGetSkillContentRequest(skillId)
 	if err != nil {
