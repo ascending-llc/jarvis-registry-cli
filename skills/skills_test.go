@@ -33,7 +33,7 @@ func TestSyncCommandRun(t *testing.T) {
 	listSkillsRespBody, err := os.ReadFile(filepath.Join("testdata", "server-response", "list.json"))
 	require.NoError(t, err, "should be able to read the mocked list_skills response from a local file")
 
-	var remoteSKills ListReponse
+	var remoteSKills ListResponse
 
 	err = json.Unmarshal(listSkillsRespBody, &remoteSKills)
 	require.NoError(t, err, "should be able to JSON unmarshal mock list_skills response body")

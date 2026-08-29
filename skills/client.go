@@ -26,7 +26,7 @@ type (
 		Version int    `json:"version"`
 	}
 
-	ListReponse struct {
+	ListResponse struct {
 		Skills []Metadata `json:"skills"`
 	}
 
@@ -126,7 +126,7 @@ func (c Client) ListSkills() ([]Metadata, error) {
 		return nil, err
 	}
 
-	var listResp ListReponse
+	var listResp ListResponse
 
 	if err = json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal list_skills response: %s", err.Error())
