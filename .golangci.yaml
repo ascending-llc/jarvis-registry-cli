@@ -150,6 +150,16 @@ linters:
           - gosec
         # taint-analysis variant of the G304 finding above: path is built from a locally-created os.MkdirTemp dir plus compile-time constants, not from an actual taint source (env vars, HTTP requests, etc.)
         text: 'G703: Path traversal via taint analysis'
+      - path: '^auth/auth_test\.go$'
+        linters:
+          - gosec
+        # fixture token values used only to assert round-tripping through the mocked keyring and test HTTP server, not real credentials
+        text: 'G101: Potential hardcoded credentials'
+      - path: '^auth/auth_test\.go$'
+        linters:
+          - gosec
+        # only marshaled to seed the mocked keyring for test setup; never logged or written to disk
+        text: 'G117: Marshaled struct field "AccessToken" \(JSON key "access_token"\) matches secret pattern'
     paths:
       - adhoc/
 
