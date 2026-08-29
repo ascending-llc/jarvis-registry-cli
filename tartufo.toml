@@ -7,6 +7,7 @@ exclude-path-patterns = [
     {path-pattern = 'go\.mod$', reason = 'go.mod file'},
     {path-pattern = 'go\.sum$', reason = 'go.sum file'},
     {path-pattern = 'tartufo\.toml$', reason = 'Tartufo config file'},
+    {path-pattern = 'skills/testdata', reason = 'testdata files'},
 ]
 
 exclude-signatures = [

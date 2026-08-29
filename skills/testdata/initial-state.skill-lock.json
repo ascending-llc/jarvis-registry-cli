@@ -1,0 +1,31 @@
+{
+  "description": "Manifest file for Jarvis Registry skill sync-down.",
+  "skills": [
+    {
+      "id": "6a1367200d32ee7200500001",
+      "name": "no-update-skill-1",
+      "version": 1
+    },
+    {
+      "id": "6a1367200d32ee7200500002",
+      "name": "not-in-remote-skill-2",
+      "version": 2
+    },
+    {
+      "id": "6a1367200d32ee7200500003",
+      "name": "not-in-remote-and-name-collide-skill-3",
+      "version": 3
+    },
+    {
+      "id": "6a1367200d32ee7200500004",
+      "name": "to-update-skill-4",
+      "version": 3
+    },
+    {
+      "id": "6a1367200d32ee7200500005",
+      "name": "accidentally-delete-skill-5",
+      "version": 5
+    }
+  ],
+  "schemaVersion": 1
+}

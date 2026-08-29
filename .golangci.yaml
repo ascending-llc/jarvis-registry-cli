@@ -125,6 +125,31 @@ linters:
           - gosec
         # synced skills folder holds only downloaded SKILL.md docs, no secrets
         text: 'G301: Expect directory permissions to be 0750 or less'
+      - path: '^skills/skills_test\.go$'
+        linters:
+          - gosec
+        # mock bearer token used only to assert the Authorization header sent to the test HTTP server, not a real credential
+        text: 'G101: Potential hardcoded credentials'
+      - path: '^skills/skills_test\.go$'
+        linters:
+          - gosec
+        # mocked registry directory under a temp test home dir, not a real deployment path
+        text: 'G301: Expect directory permissions to be 0750 or less'
+      - path: '^skills/skills_test\.go$'
+        linters:
+          - gosec
+        # manifest fixture written to a temp test dir; 0444 mirrors the production read-only permissions and holds no secrets
+        text: 'G306: Expect WriteFile permissions to be 0600 or less'
+      - path: '^skills/skills_test\.go$'
+        linters:
+          - gosec
+        # paths are built from package constants and names enumerated from local testdata fixtures, not from untrusted input
+        text: 'G304: Potential file inclusion via variable'
+      - path: '^skills/skills_test\.go$'
+        linters:
+          - gosec
+        # taint-analysis variant of the G304 finding above: path is built from a locally-created os.MkdirTemp dir plus compile-time constants, not from an actual taint source (env vars, HTTP requests, etc.)
+        text: 'G703: Path traversal via taint analysis'
     paths:
       - adhoc/
 

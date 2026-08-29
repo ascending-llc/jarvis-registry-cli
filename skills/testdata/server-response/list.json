@@ -1,0 +1,24 @@
+{
+  "skills": [
+    {
+      "id": "6a1367200d32ee7200500001",
+      "name": "no-update-skill-1",
+      "version": 1
+    },
+    {
+      "id": "6a1367200d32ee7200500004",
+      "name": "to-update-skill-4",
+      "version": 4
+    },
+    {
+      "id": "6a1367200d32ee7200500005",
+      "name": "accidentally-deleted-skill-5",
+      "version": 5
+    },
+    {
+      "id": "6a1367200d32ee7200500006",
+      "name": "to-create-skill-6",
+      "version": 6
+    }
+  ]
+}

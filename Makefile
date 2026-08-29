@@ -1,11 +1,11 @@
 .DEFAULT_GOAL := all
 
 test:
-	@go test ./...
+	@go test -race ./...
 .PHONY: test
 
 coverage:
-	@go test -coverprofile=coverage.out ./...
+	@go test -race -coverprofile=coverage.out ./...
 .PHONY: coverage
 
 show: coverage
