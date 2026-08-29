@@ -1,0 +1,5 @@
+local:
+  destination_folder: "$HOME"
+
+registry:
+  base_url: "https://example.com"

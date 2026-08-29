@@ -1,0 +1,5 @@
+local:
+  destination_folder: "~otheruser/dest"
+
+registry:
+  base_url: "https://example.com"
