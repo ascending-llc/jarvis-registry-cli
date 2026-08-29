@@ -9,6 +9,7 @@ on:
       - "go.mod"
       - "go.sum"
       - ".golangci.yaml"
+      - "**/testdata/**"
 
   pull_request:
     paths:
@@ -16,6 +17,7 @@ on:
       - "go.mod"
       - "go.sum"
       - ".golangci.yaml"
+      - "**/testdata/**"
 
   workflow_dispatch:
 
