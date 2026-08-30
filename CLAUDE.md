@@ -10,7 +10,7 @@ Command structs use `github.com/alecthomas/kong`, which drives them through a th
 2. **`AfterApply`** — derive fields that depend on parsed flags or on data loaded at startup (e.g. config).
 3. **`Run`** — assumes all dependencies are already set; if a dependency needs something only known at `Run` time, resolve it as the first step of `Run`.
 
-`skills.SyncCommand` is the reference implementation. Fields that need to be swapped out in tests (e.g. `configLoadFunc`, `tp`) are exactly the ones with no CLI-flag dependency — inject them as interface-typed or func-typed struct fields, not package-level vars.
+`skills.SyncCommand` is the reference implementation. Fields that need to be swapped out in tests (e.g. `configLoadFunc`, `tp`) — inject them as interface-typed or func-typed struct fields, not package-level vars.
 
 To add a new subcommand: define a command type (e.g. `mypkg.MyCommand`) implementing the phases above, then register it as a new field with a `cmd:"" name:"<subcommand-name>"` kong tag on the `cli` struct in `cmd/jarvis-registry/main.go`.
 
