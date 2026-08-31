@@ -18,8 +18,13 @@
     },
     {
       "id": "6a1367200d32ee7200500006",
-      "name": "to-create-skill-6",
+      "name": "not-in-remote-and-name-collide-skill-3",
       "version": 6
+    },
+    {
+      "id": "6a1367200d32ee7200500007",
+      "name": "to-create-skill-7",
+      "version": 7
     }
   ],
   "schemaVersion": 1

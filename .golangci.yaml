@@ -160,8 +160,6 @@ linters:
           - gosec
         # only marshaled to seed the mocked keyring for test setup; never logged or written to disk
         text: 'G117: Marshaled struct field "AccessToken" \(JSON key "access_token"\) matches secret pattern'
-    paths:
-      - adhoc/
 
 issues:
   max-issues-per-linter: 0      

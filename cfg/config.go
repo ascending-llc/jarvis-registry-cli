@@ -105,7 +105,7 @@ func resolveDest(dest string) (string, error) {
 		return "", errors.New(`"~user" home directories are not supported, only "~" for the current user`)
 	}
 
-	dest = homeTokenPattern.ReplaceAllString(dest, home)
+	dest = homeTokenPattern.ReplaceAllLiteralString(dest, home)
 
 	dest = filepath.Clean(dest)
 

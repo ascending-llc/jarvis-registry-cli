@@ -93,7 +93,7 @@ func (c Client) newGetSkillContentRequest(skillId string) (*http.Request, error)
 	u := url.URL{
 		Scheme: c.scheme,
 		Host:   c.host,
-		Path:   fmt.Sprintf("%s/api/v1/skills/%s/content", c.basePath, skillId),
+		Path:   fmt.Sprintf("%s/api/v1/skills/%s/content", c.basePath, url.PathEscape(skillId)),
 	}
 
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)

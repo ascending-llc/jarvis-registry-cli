@@ -12,7 +12,7 @@ import (
 	"github.com/cli/oauth/api"
 
 	"github.com/ascending-llc/jarvis-registry-cli/creds"
-	"github.com/ascending-llc/jarvis-registry-cli/internal/http"
+	registryHttp "github.com/ascending-llc/jarvis-registry-cli/internal/http"
 )
 
 type (
@@ -49,7 +49,7 @@ type (
 const (
 	ascendingService = "ascendingdc.com"
 
-	jarvisRegsitryCli = "jarvis-registry-cli"
+	jarvisRegistryCli = "jarvis-registry-cli"
 
 	deviceCodePath = "/auth/oauth2/device/code"
 
@@ -69,7 +69,7 @@ func NewRegistryTokenResolver(baseUrl string, scopes []string, logger Logger) Re
 
 	r := RegistryTokenResolver{
 		logger:        logger,
-		creds:         creds.NewReadWriter(ascendingService, jarvisRegsitryCli),
+		creds:         creds.NewReadWriter(ascendingService, jarvisRegistryCli),
 		deviceCodeUrl: baseUrl + deviceCodePath,
 		tokenUrl:      baseUrl + tokenPath,
 		scopes:        scopes,
@@ -82,7 +82,7 @@ func NewRegistryTokenResolver(baseUrl string, scopes []string, logger Logger) Re
 		},
 		ClientID:   clientId,
 		Scopes:     scopes,
-		HTTPClient: http.DefaultClient,
+		HTTPClient: registryHttp.DefaultClient,
 	}
 
 	return r
@@ -179,7 +179,7 @@ func (r RegistryTokenResolver) refreshFlow(refreshToken string, st *StoredTokens
 		"refresh_token": {refreshToken},
 	}
 
-	resp, err := api.PostForm(http.DefaultClient, r.tokenUrl, values)
+	resp, err := api.PostForm(registryHttp.DefaultClient, r.tokenUrl, values)
 	if err != nil {
 		return fmt.Errorf("failed to finish refresh flow: %s", err.Error())
 	}

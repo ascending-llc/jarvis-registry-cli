@@ -194,7 +194,7 @@ func isSafeSkillName(name string) bool {
 
 func (c *SyncCommand) guaranteeDestDir() error {
 	if stat, err := os.Stat(c.destDir); errors.Is(err, fs.ErrNotExist) {
-		if err = os.Mkdir(c.destDir, 0755); err != nil {
+		if err = os.MkdirAll(c.destDir, 0755); err != nil {
 			return fmt.Errorf("failed to create skills folder at %s: %s", c.destDir, err.Error())
 		}
 	} else if err != nil {
