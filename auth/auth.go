@@ -13,17 +13,24 @@ import (
 
 	"github.com/ascending-llc/jarvis-registry-cli/creds"
 	"github.com/ascending-llc/jarvis-registry-cli/internal/http"
-	"github.com/ascending-llc/jarvis-registry-cli/logging"
 )
 
 type (
+	// Logger is the minimal logging interface required by this package,
+	// satisfied by *log.Logger.
+	Logger interface {
+		Print(v ...any)
+		Printf(format string, v ...any)
+		Println(v ...any)
+	}
+
 	// RegistryTokenResolver resolves a Jarvis Registry access token,
 	// performing an OAuth device grant when no cached token exists and
 	// transparently refreshing an expired one. Resolved tokens are cached
 	// in the OS keyring via creds.KeyringReadWriter.
 	RegistryTokenResolver struct {
 		flow          *oauth.Flow
-		logger        logging.Logger
+		logger        Logger
 		creds         creds.KeyringReadWriter
 		deviceCodeUrl string
 		tokenUrl      string
@@ -57,7 +64,7 @@ const (
 // at baseUrl, requesting the given OAuth scopes. logger receives
 // diagnostic messages for non-fatal failures, such as failing to cache a
 // newly obtained token.
-func NewRegistryTokenResolver(baseUrl string, scopes []string, logger logging.Logger) RegistryTokenResolver {
+func NewRegistryTokenResolver(baseUrl string, scopes []string, logger Logger) RegistryTokenResolver {
 	baseUrl = strings.TrimSuffix(baseUrl, "/")
 
 	r := RegistryTokenResolver{
@@ -73,8 +80,9 @@ func NewRegistryTokenResolver(baseUrl string, scopes []string, logger logging.Lo
 			DeviceCodeURL: r.deviceCodeUrl,
 			TokenURL:      r.tokenUrl,
 		},
-		ClientID: clientId,
-		Scopes:   scopes,
+		ClientID:   clientId,
+		Scopes:     scopes,
+		HTTPClient: http.DefaultClient,
 	}
 
 	return r

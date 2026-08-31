@@ -16,6 +16,7 @@ import (
 	"github.com/zalando/go-keyring"
 
 	"github.com/ascending-llc/jarvis-registry-cli/creds"
+	registryHttp "github.com/ascending-llc/jarvis-registry-cli/internal/http"
 )
 
 const (
@@ -38,6 +39,7 @@ func TestNewRegistryTokenResolver(t *testing.T) {
 	assert.Equal(t, scopes, r.flow.Scopes, "flow.Scopes should match the given scopes")
 	assert.Equal(t, r.deviceCodeUrl, r.flow.Host.DeviceCodeURL, "flow.Host.DeviceCodeURL should match deviceCodeUrl")
 	assert.Equal(t, r.tokenUrl, r.flow.Host.TokenURL, "flow.Host.TokenURL should match tokenUrl")
+	assert.Same(t, registryHttp.DefaultClient, r.flow.HTTPClient, "flow.HTTPClient should be the shared, timeout-bounded internal/http.DefaultClient rather than the zero-value http.DefaultClient, so the device flow's HTTP calls cannot hang indefinitely on a stalled connection")
 }
 
 func TestGetAccessToken(t *testing.T) {

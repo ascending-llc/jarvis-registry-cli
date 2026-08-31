@@ -17,7 +17,7 @@ lint:
 .PHONY: lint
 
 verify:
-	@pre-commit run --all-files golangci-lint-verify
+	@pre-commit run --all-files golangci-lint-config-verify
 .PHONY: verify
 
 fmt:
@@ -26,10 +26,10 @@ fmt:
 
 lint-all:
 	@pre-commit run --all-files
-.PHONY: all
+.PHONY: lint-all
 
 tartufo:
-	@pre-commit run tartufo
+	@pre-commit run --all-files tartufo
 .PHONY: tartufo
 
 all: test lint

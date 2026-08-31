@@ -44,6 +44,7 @@ To add a new subcommand: define a command type (e.g. `mypkg.MyCommand`) implemen
 - Use the `Makefile` targets rather than calling `go test` / `golangci-lint` / etc. directly — `make all` (test + lint) is the default target and the bar for a change being done.
 - `golangci-lint` must pass. Suppress a false positive case-by-case in `.golangci.yaml` under `linters.exclusions.rules`, scoped to the specific `path` and `text`, with a comment explaining why — never a blanket `//nolint` or a disabled linter.
 - `tartufo` does secret scanning; exclude false positives via `tartufo.toml`, not by skipping the hook.
+- Coding agents: never invoke tartufo yourself (`make tartufo`, `make lint-all`, or a raw `pre-commit run ... tartufo`) — a hit's ANSI-highlighted snippet won't render in a captured-stdout session, and even a clean run floods context for no benefit. The git hook and CI already enforce this.
 - Import grouping and other style rules are auto-fixed by the lint/format tooling — run `make fmt` (or let pre-commit do it) rather than hand-arranging imports.
 
 ## Error handling

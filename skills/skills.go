@@ -8,14 +8,22 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/ascending-llc/jarvis-registry-cli/auth"
 	"github.com/ascending-llc/jarvis-registry-cli/cfg"
-	"github.com/ascending-llc/jarvis-registry-cli/logging"
 )
 
 type (
+	// Logger is the minimal logging interface required by this package,
+	// satisfied by *log.Logger.
+	Logger interface {
+		Print(v ...any)
+		Printf(format string, v ...any)
+		Println(v ...any)
+	}
+
 	// TokenProvider resolves a Registry access token for SyncCommand.
 	TokenProvider interface {
 		GetAccessToken() (string, error)
@@ -30,7 +38,7 @@ type (
 		registryDir    string
 		destDir        string
 		baseUrl        string
-		logger         logging.Logger
+		logger         Logger
 		configLoadFunc func(string) (cfg.Config, error)
 		tp             TokenProvider
 		client         Client
@@ -135,6 +143,14 @@ func (c *SyncCommand) Run() (err error) {
 		return err
 	}
 
+	// reject any remote skill name that is unsafe to use as a filesystem
+	// path component before it reaches any os.* call
+	for _, r := range remoteSkills {
+		if !isSafeSkillName(r.Name) {
+			return fmt.Errorf("remote skill %s (id %s) has a name that is unsafe to use as a filesystem path", r.Name, r.Id)
+		}
+	}
+
 	// compare local and remote and categorize skills
 	toDelete, toUpdate, toCreate := c.getSyncSpecs(localSkills, remoteSkills)
 
@@ -161,6 +177,19 @@ func (c *SyncCommand) Run() (err error) {
 	}
 
 	return nil
+}
+
+// isSafeSkillName reports whether name can be safely used as a single
+// filesystem path component under destDir. filepath.Join only lexically
+// normalizes its arguments; it does not confine the result to destDir, so
+// a name such as "../../etc" must be rejected explicitly rather than
+// relied upon to be cleaned away.
+func isSafeSkillName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+
+	return !strings.ContainsAny(name, `/\`)
 }
 
 func (c *SyncCommand) guaranteeDestDir() error {

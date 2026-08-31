@@ -29,6 +29,29 @@ func (tp MockTokenProvider) GetAccessToken() (string, error) {
 	return mockBearerToken, nil
 }
 
+func TestIsSafeSkillName(t *testing.T) {
+	cases := []struct {
+		name string
+		safe bool
+	}{
+		{name: "my-skill", safe: true},
+		{name: "my_skill.v2", safe: true},
+		{name: "", safe: false},
+		{name: ".", safe: false},
+		{name: "..", safe: false},
+		{name: "../../etc/cron.d/evil", safe: false},
+		{name: "nested/path", safe: false},
+		{name: `nested\path`, safe: false},
+		{name: "/etc/passwd", safe: false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.safe, isSafeSkillName(c.name), "isSafeSkillName(%q) mismatch", c.name)
+		})
+	}
+}
+
 func TestSyncCommandRun(t *testing.T) {
 	listSkillsRespBody, err := os.ReadFile(filepath.Join("testdata", "server-response", "list.json"))
 	require.NoError(t, err, "should be able to read the mocked list_skills response from a local file")
@@ -109,6 +132,33 @@ func TestSyncCommandRun(t *testing.T) {
 
 		assertSyncResult(t, mockSkillsDir, registryDir)
 	})
+}
+
+// TestSyncCommandRunRejectsUnsafeSkillName is a defense-in-depth check
+// against a misbehaving/compromised registry response: a skill name that
+// escapes destDir via ".." must fail the whole Run loudly, before any
+// filesystem call is made with it, rather than being silently cleaned by
+// filepath.Join.
+func TestSyncCommandRunRejectsUnsafeSkillName(t *testing.T) {
+	mux := http.NewServeMux()
+
+	mux.Handle(fmt.Sprintf("GET %s/api/v1/skills", registryBasePath), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := w.Write([]byte(`{"skills":[{"id":"evil-1","name":"../../etc/cron.d/evil","version":1}]}`))
+		require.NoError(t, err, "should be able to return the malicious mock list_skills response")
+	}))
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
+
+	err := cmd.Run()
+	require.Error(t, err, "Run should reject a remote skill name that is unsafe to use as a filesystem path")
+	assert.Contains(t, err.Error(), "unsafe to use as a filesystem path", "error should explain why Run failed")
+
+	entries, err := os.ReadDir(mockSkillsDir)
+	require.NoError(t, err, "should be able to list the mocked skills directory after the rejected sync")
+	assert.Empty(t, entries, "no skill folder should have been created for the unsafe skill name")
 }
 
 func newTestSyncSetup(t *testing.T, ts *httptest.Server) (cmd SyncCommand, mockSkillsDir, registryDir string) {
