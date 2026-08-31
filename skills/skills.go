@@ -37,6 +37,7 @@ type (
 		userHomeDir    string
 		registryDir    string
 		destDir        string
+		tempDir        string
 		baseUrl        string
 		logger         Logger
 		configLoadFunc func(string) (cfg.Config, error)
@@ -56,7 +57,9 @@ type (
 	}
 
 	// SyncFn creates or updates the local copy of the skill described by
-	// spec and returns its resulting metadata.
+	// spec and returns its resulting metadata. An update implementation may
+	// only stage the change rather than persist it directly; see stageOne
+	// and commitStaged.
 	SyncFn func(SyncSpec) (Metadata, error)
 )
 
@@ -68,6 +71,12 @@ const (
 	registryDirName = ".jarvis-registry"
 
 	concurrency = 5
+
+	// tempDirPattern names the scratch directory stageOne stages updated
+	// skills into. It is created inside destDir (see MkdirTemp's dir
+	// argument in Run) so that commitStaged's move into destDir is a same-
+	// filesystem, single-syscall os.Rename rather than a cross-device copy.
+	tempDirPattern = ".jarvis-registry-sync-*"
 )
 
 // BeforeReset sets defaults for SyncCommand that don't depend on parsed
@@ -161,12 +170,28 @@ func (c *SyncCommand) Run() (err error) {
 		return fmt.Errorf("failed to delete certain skills that user no longer has access to: %s", err.Error())
 	}
 
-	updatedSkills, err := c.createOrUpdateMany(toUpdate, c.updateOne)
+	// stageOne (fanned out below) never writes into destDir under a skill's
+	// RemoteName directly; it stages that content here instead. This keeps
+	// concurrent stageOne calls collision-free even when two specs swap
+	// names, since commitStaged only moves staged folders into destDir
+	// once every stageOne call — and every RemoveAll of an outdated
+	// LocalName — has already finished.
+	if c.tempDir, err = os.MkdirTemp(c.destDir, tempDirPattern); err != nil {
+		return fmt.Errorf("failed to create scratch directory for staging updated skills: %s", err.Error())
+	}
+
+	defer func() { _ = os.RemoveAll(c.tempDir) }()
+
+	updatedSkills, err := c.boundedFanOut(toUpdate, c.stageOne)
 	if err != nil {
 		return fmt.Errorf("failed to update certain skills: %s", err.Error())
 	}
 
-	createdSkills, err := c.createOrUpdateMany(toCreate, c.createOne)
+	if err = c.commitStaged(toUpdate); err != nil {
+		return fmt.Errorf("failed to finalize updated skills: %s", err.Error())
+	}
+
+	createdSkills, err := c.boundedFanOut(toCreate, c.createOne)
 	if err != nil {
 		return fmt.Errorf("failed to create certain skills: %s", err.Error())
 	}
@@ -285,13 +310,20 @@ func (c *SyncCommand) createOne(spec SyncSpec) (Metadata, error) {
 	return Metadata{Id: spec.Id, Name: spec.RemoteName, Version: spec.RemoteVersion}, nil
 }
 
-// updateOne brings the local copy of a skill that exists both locally and
-// remotely up to date. It re-fetches and rewrites the skill's folder
-// whenever the local name or version differs from the remote, or when the
-// expected local folder is missing, unreadable, or not a directory —
-// treating any such stat anomaly as needing a refresh. Otherwise it is a
-// no-op.
-func (c *SyncCommand) updateOne(spec SyncSpec) (Metadata, error) {
+// stageOne prepares an up-to-date local copy of a skill that exists both
+// locally and remotely, ahead of commitStaged moving it into place. It
+// re-fetches the skill's content whenever the local name or version
+// differs from the remote, or when the expected local folder is missing,
+// unreadable, or not a directory — treating any such stat anomaly as
+// needing a refresh; otherwise it is a no-op. When a refresh is needed, it
+// removes the outdated folder under LocalName from destDir directly, but
+// builds the fresh folder under RemoteName inside c.tempDir rather than
+// destDir: RemoteName is guaranteed unique across a ListSkills response,
+// so concurrent stageOne calls can never collide with each other there,
+// even when two specs in the same batch swap names (A: foo→bar, B:
+// bar→foo) — unlike destDir, where A's fresh "bar" and B's outdated "bar"
+// would be the same path.
+func (c *SyncCommand) stageOne(spec SyncSpec) (Metadata, error) {
 	var needChange bool
 
 	if stat, err := os.Stat(filepath.Join(c.destDir, spec.LocalName)); errors.Is(err, fs.ErrNotExist) {
@@ -317,18 +349,43 @@ func (c *SyncCommand) updateOne(spec SyncSpec) (Metadata, error) {
 		return Metadata{}, fmt.Errorf("failed to remove outdated local skill %s, version %d: %s", spec.LocalName, spec.LocalVersion, err.Error())
 	}
 
-	if err = os.Mkdir(filepath.Join(c.destDir, spec.RemoteName), 0755); err != nil {
-		return Metadata{}, fmt.Errorf("failed to create folder for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())
+	if err = os.Mkdir(filepath.Join(c.tempDir, spec.RemoteName), 0755); err != nil {
+		return Metadata{}, fmt.Errorf("failed to stage folder for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())
 	}
 
-	if err = os.WriteFile(filepath.Join(c.destDir, spec.RemoteName, "SKILL.md"), []byte(content.Body), 0644); err != nil {
+	if err = os.WriteFile(filepath.Join(c.tempDir, spec.RemoteName, "SKILL.md"), []byte(content.Body), 0644); err != nil {
 		return Metadata{}, fmt.Errorf("failed to write SKILL.md file for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())
 	}
 
 	return Metadata{Id: spec.Id, Name: spec.RemoteName, Version: spec.RemoteVersion}, nil
 }
 
-func (c *SyncCommand) createOrUpdateMany(specs []SyncSpec, fn SyncFn) ([]Metadata, error) {
+// commitStaged moves every folder stageOne staged under c.tempDir into
+// destDir under its final RemoteName. Callers must run this only after
+// every stageOne call for specs has returned — including every RemoveAll
+// of an outdated LocalName — so that no move performed here can still be
+// followed by a sibling spec's delete of that same destination path. A
+// spec that was a no-op in stageOne has nothing staged and is skipped.
+// Moving is a single same-filesystem os.Rename per spec (see tempDirPattern),
+// cheap enough that fanning it out concurrently would not be worthwhile.
+func (c *SyncCommand) commitStaged(specs []SyncSpec) error {
+	errs := make([]error, 0, len(specs))
+
+	for _, spec := range specs {
+		staged := filepath.Join(c.tempDir, spec.RemoteName)
+
+		if err := os.Rename(staged, filepath.Join(c.destDir, spec.RemoteName)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("failed to move staged skill %s, version %d into place: %s", spec.RemoteName, spec.RemoteVersion, err.Error()))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+// boundedFanOut calls fn once per spec, running at most `concurrency`
+// calls at a time, and returns each call's result at the same index as
+// its spec, alongside every per-call error joined together.
+func (c *SyncCommand) boundedFanOut(specs []SyncSpec, fn SyncFn) ([]Metadata, error) {
 	results := make([]Metadata, len(specs))
 	errs := make([]error, len(specs))
 

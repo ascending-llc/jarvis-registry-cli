@@ -24,6 +24,16 @@
       "id": "6a1367200d32ee7200500007",
       "name": "to-create-skill-7",
       "version": 7
+    },
+    {
+      "id": "6a1367200d32ee7200500008",
+      "name": "swap-skill-beta",
+      "version": 2
+    },
+    {
+      "id": "6a1367200d32ee7200500009",
+      "name": "swap-skill-alpha",
+      "version": 2
     }
   ]
 }

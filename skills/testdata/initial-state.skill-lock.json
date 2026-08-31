@@ -25,6 +25,16 @@
       "id": "6a1367200d32ee7200500005",
       "name": "accidentally-delete-skill-5",
       "version": 5
+    },
+    {
+      "id": "6a1367200d32ee7200500008",
+      "name": "swap-skill-alpha",
+      "version": 1
+    },
+    {
+      "id": "6a1367200d32ee7200500009",
+      "name": "swap-skill-beta",
+      "version": 1
     }
   ],
   "schemaVersion": 1
