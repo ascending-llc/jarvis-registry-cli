@@ -52,6 +52,45 @@ func TestIsSafeSkillName(t *testing.T) {
 	}
 }
 
+func TestSyncCommandAfterApply(t *testing.T) {
+	cases := []struct {
+		name            string
+		baseUrl         string
+		authBaseUrl     string
+		wantAuthBaseUrl string
+	}{
+		{name: "distinct auth_base_url is wired through as-is", baseUrl: "https://registry.example.com", authBaseUrl: "http://localhost:8888", wantAuthBaseUrl: "http://localhost:8888"},
+		{name: "auth_base_url defaulted to base_url by cfg.Load is wired through as-is", baseUrl: "https://registry.example.com", authBaseUrl: "https://registry.example.com", wantAuthBaseUrl: "https://registry.example.com"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cmd := SyncCommand{}
+
+			err := cmd.BeforeReset()
+			require.NoError(t, err, "should be able to call SyncCommand.BeforeReset without error")
+
+			cmd.configLoadFunc = func(string) (cfg.Config, error) {
+				var config cfg.Config
+
+				config.Registry.BaseUrl = c.baseUrl
+				config.Registry.AuthBaseUrl = c.authBaseUrl
+				config.Local.Dest = t.TempDir()
+
+				return config, nil
+			}
+
+			err = cmd.AfterApply()
+			require.NoError(t, err, "should be able to call SyncCommand.AfterApply without error")
+
+			assert.Equal(t, c.baseUrl, cmd.baseUrl, "baseUrl should be taken from config.Registry.BaseUrl")
+			assert.Equal(t, c.wantAuthBaseUrl, cmd.authBaseUrl, "authBaseUrl should be taken from config.Registry.AuthBaseUrl, distinct from baseUrl when cfg.Load resolved it that way")
+
+			require.NotNil(t, cmd.tp, "tp should be initialized")
+		})
+	}
+}
+
 func TestSyncCommandRun(t *testing.T) {
 	listSkillsRespBody, err := os.ReadFile(filepath.Join("testdata", "server-response", "list.json"))
 	require.NoError(t, err, "should be able to read the mocked list_skills response from a local file")
@@ -206,6 +245,8 @@ func newTestSyncSetup(t *testing.T, ts *httptest.Server) (cmd SyncCommand, mockS
 		var config cfg.Config
 
 		config.Registry.BaseUrl = ts.URL
+
+		config.Registry.AuthBaseUrl = ts.URL
 
 		config.Local.Dest = mockSkillsDir
 

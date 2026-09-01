@@ -17,16 +17,19 @@ func TestLoadValid(t *testing.T) {
 	wantDest := filepath.Join(home, "jarvis-registry-cli-test-dest")
 
 	cases := []struct {
-		name        string
-		wantBaseUrl string
+		name            string
+		wantBaseUrl     string
+		wantAuthBaseUrl string
 	}{
-		{name: "valid-tilde-dest", wantBaseUrl: "https://example.com"},
-		{name: "valid-dollar-home-dest", wantBaseUrl: "https://example.com"},
-		{name: "valid-braced-home-dest", wantBaseUrl: "HTTPS://example.com/api"},
-		{name: "valid-percent-userprofile-dest", wantBaseUrl: "https://example.com"},
-		{name: "valid-dollar-userprofile-dest", wantBaseUrl: "https://example.com"},
-		{name: "valid-http-localhost-url", wantBaseUrl: "http://localhost:8080"},
-		{name: "valid-http-127-url", wantBaseUrl: "http://127.0.0.1:3000"},
+		{name: "valid-tilde-dest", wantBaseUrl: "https://example.com", wantAuthBaseUrl: "https://example.com"},
+		{name: "valid-dollar-home-dest", wantBaseUrl: "https://example.com", wantAuthBaseUrl: "https://example.com"},
+		{name: "valid-braced-home-dest", wantBaseUrl: "HTTPS://example.com/api", wantAuthBaseUrl: "HTTPS://example.com/api"},
+		{name: "valid-percent-userprofile-dest", wantBaseUrl: "https://example.com", wantAuthBaseUrl: "https://example.com"},
+		{name: "valid-dollar-userprofile-dest", wantBaseUrl: "https://example.com", wantAuthBaseUrl: "https://example.com"},
+		{name: "valid-http-localhost-url", wantBaseUrl: "http://localhost:8080", wantAuthBaseUrl: "http://localhost:8080"},
+		{name: "valid-http-127-url", wantBaseUrl: "http://127.0.0.1:3000", wantAuthBaseUrl: "http://127.0.0.1:3000"},
+		{name: "valid-explicit-auth-base-url", wantBaseUrl: "https://registry.example.com", wantAuthBaseUrl: "https://auth.example.com"},
+		{name: "valid-local-auth-base-url", wantBaseUrl: "https://registry.example.com", wantAuthBaseUrl: "http://localhost:8888"},
 	}
 
 	for _, c := range cases {
@@ -36,6 +39,7 @@ func TestLoadValid(t *testing.T) {
 
 			assert.Equal(t, wantDest, config.Local.Dest, "destination_folder should resolve to the expanded home-relative path")
 			assert.Equal(t, c.wantBaseUrl, config.Registry.BaseUrl, "base_url should be trimmed of its trailing slash")
+			assert.Equal(t, c.wantAuthBaseUrl, config.Registry.AuthBaseUrl, "auth_base_url should default to base_url when unset, or be preserved (trimmed) when set explicitly")
 		})
 	}
 }
@@ -51,6 +55,7 @@ func TestLoadInvalid(t *testing.T) {
 		{name: "invalid-home-dest", wantErrText: "unsafe"},
 		{name: "invalid-http-scheme-url", wantErrText: "scheme must be https"},
 		{name: "invalid-http-localhost-lookalike-host", wantErrText: "scheme must be https"},
+		{name: "invalid-auth-base-url", wantErrText: "invalid registry.auth_base_url"},
 		{name: "invalid-empty-url", wantErrText: "URL must not be empty"},
 		{name: "invalid-no-host-url", wantErrText: "must include a host"},
 		{name: "invalid-malformed-url", wantErrText: "not a valid URL"},

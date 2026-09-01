@@ -39,6 +39,7 @@ type (
 		destDir        string
 		tempDir        string
 		baseUrl        string
+		authBaseUrl    string
 		logger         Logger
 		configLoadFunc func(string) (cfg.Config, error)
 		tp             TokenProvider
@@ -94,8 +95,8 @@ func (c *SyncCommand) BeforeReset() (err error) {
 }
 
 // AfterApply derives SyncCommand's remaining dependencies from the loaded
-// config: the registry directory, destination folder, Registry base URL,
-// and token provider.
+// config: the registry directory, destination folder, Registry and
+// auth-server base URLs, and token provider.
 func (c *SyncCommand) AfterApply() (err error) {
 	c.registryDir = filepath.Join(c.userHomeDir, registryDirName)
 
@@ -108,7 +109,9 @@ func (c *SyncCommand) AfterApply() (err error) {
 
 	c.baseUrl = config.Registry.BaseUrl
 
-	c.tp = auth.NewRegistryTokenResolver(c.baseUrl, []string{skillsReadScope}, c.logger)
+	c.authBaseUrl = config.Registry.AuthBaseUrl
+
+	c.tp = auth.NewRegistryTokenResolver(c.authBaseUrl, []string{skillsReadScope}, c.logger)
 
 	return nil
 }
