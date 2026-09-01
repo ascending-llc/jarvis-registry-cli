@@ -121,7 +121,8 @@ func resolveDest(dest string) (string, error) {
 }
 
 // validateBaseUrl requires raw to be a well-formed URL with an https scheme
-// and a non-empty host.
+// and a non-empty host. As an exception for local testing, http is also
+// accepted when the host is "localhost" or "127.0.0.1", at any port.
 func validateBaseUrl(raw string) error {
 	if raw == "" {
 		return errors.New("URL must not be empty")
@@ -132,8 +133,9 @@ func validateBaseUrl(raw string) error {
 		return fmt.Errorf("not a valid URL: %s", err.Error())
 	}
 
-	if u.Scheme != "https" {
-		return fmt.Errorf("scheme must be https, got %q", u.Scheme)
+	isLocalHTTP := u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1")
+	if u.Scheme != "https" && !isLocalHTTP {
+		return fmt.Errorf("scheme must be https, or http for localhost/127.0.0.1, got %q", u.Scheme)
 	}
 
 	if u.Host == "" {

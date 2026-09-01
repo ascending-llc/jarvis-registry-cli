@@ -25,6 +25,8 @@ func TestLoadValid(t *testing.T) {
 		{name: "valid-braced-home-dest", wantBaseUrl: "HTTPS://example.com/api"},
 		{name: "valid-percent-userprofile-dest", wantBaseUrl: "https://example.com"},
 		{name: "valid-dollar-userprofile-dest", wantBaseUrl: "https://example.com"},
+		{name: "valid-http-localhost-url", wantBaseUrl: "http://localhost:8080"},
+		{name: "valid-http-127-url", wantBaseUrl: "http://127.0.0.1:3000"},
 	}
 
 	for _, c := range cases {
@@ -48,6 +50,7 @@ func TestLoadInvalid(t *testing.T) {
 		{name: "invalid-other-user-tilde-dest", wantErrText: `"~user"`},
 		{name: "invalid-home-dest", wantErrText: "unsafe"},
 		{name: "invalid-http-scheme-url", wantErrText: "scheme must be https"},
+		{name: "invalid-http-localhost-lookalike-host", wantErrText: "scheme must be https"},
 		{name: "invalid-empty-url", wantErrText: "URL must not be empty"},
 		{name: "invalid-no-host-url", wantErrText: "must include a host"},
 		{name: "invalid-malformed-url", wantErrText: "not a valid URL"},
