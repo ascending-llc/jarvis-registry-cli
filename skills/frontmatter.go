@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"unicode"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -13,7 +12,7 @@ import (
 // SKILL.md frontmatter block. A plain map would marshal in Go's randomized
 // map iteration order; this struct makes yaml.Marshal's output deterministic
 // and matches the real Claude Code spec's field order.
-type claudeCodeFrontmatter struct { //nolint:govet // fieldalignment: field order is the on-disk YAML key order (yaml.Marshal follows struct declaration order), not packed for size
+type claudeCodeFrontmatter struct { //nolint:govet // fieldalignment: field order is the on-disk YAML key order (yaml.Marshal follows struct declaration order), not packed for size. Inline, not a .golangci.yaml exclusions.rules entry, because fieldalignment's diagnostic text encodes struct-specific byte-count arithmetic and can't be pinned to a stable text: regex the way this repo's other suppressions can.
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
 
@@ -195,15 +194,10 @@ func renderSkillMarkdown(content Content, remoteName string) (string, error) {
 		}
 	}
 
-	allowedTools := content.AllowedTools
-	if allowedTools == nil {
-		allowedTools = stringSliceValue(merged["allowed-tools"])
-	}
-
 	rendered := claudeCodeFrontmatter{
 		Name:                   remoteName,
 		Description:            description,
-		AllowedTools:           strings.Join(allowedTools, " "),
+		AllowedTools:           resolvedAllowedTools(content.AllowedTools, merged["allowed-tools"]),
 		License:                stringValue(merged["license"]),
 		Compatibility:          stringValue(merged["compatibility"]),
 		ArgumentHint:           stringValue(merged["argument-hint"]),
@@ -257,32 +251,62 @@ func stringValue(v any) string {
 	return s
 }
 
-// stringSliceValue converts a YAML/JSON-decoded value into a []string: a
-// []any (dropping any non-string element), or the Agent Skills spec's own
-// canonical space-/comma-separated string form (e.g. "Bash Read, Write"),
-// split on any run of commas/whitespace — mirroring AS-1820's own
-// _split_allowed_tools Pydantic validator, so both systems accept the same
-// input shapes for the same reason. Returns nil for any other type,
-// including a genuinely absent key.
-func stringSliceValue(v any) []string {
-	switch val := v.(type) {
-	case []any:
-		out := make([]string, 0, len(val))
+// resolvedAllowedTools returns the final space-joined allowed-tools string
+// to write to the rendered SKILL.md: fromContent, joined, if non-nil
+// (content.AllowedTools — Registry/Chat's own opinion, including a
+// deliberate empty list); otherwise fallback — merged's own "allowed-tools"
+// value, from whichever of content.Frontmatter or the inline body
+// frontmatter supplied it.
+//
+// A fallback that is already a plain string is used byte-for-byte, never
+// split into tokens and rejoined: content.Frontmatter's own copy of
+// allowedTools is always a real list by the time it reaches here (Registry
+// validates and tokenizes any string form before storage, per AS-1820), so
+// the only source that can ever supply a raw string here is a Chat-authored
+// skill's own inline body frontmatter, entirely outside Registry's
+// validation. Splitting that string on commas/whitespace and rejoining it
+// with single spaces would silently corrupt any entry with its own
+// internal comma or irregular spacing — e.g. "Bash(echo a, b)" becoming
+// "Bash(echo a b)" — for no benefit, since the result is immediately
+// turned back into a single string either way; the CLI has no consumer
+// that ever needs the intermediate tokenized form.
+//
+// A fallback that is a []any (an actual YAML list) has no such risk and is
+// joined with a single space. Any other type, or a genuinely absent key,
+// resolves to "".
+func resolvedAllowedTools(fromContent []string, fallback any) string {
+	if fromContent != nil {
+		return strings.Join(fromContent, " ")
+	}
 
-		for _, item := range val {
-			if s, ok := item.(string); ok {
-				out = append(out, s)
-			}
-		}
-
-		return out
+	switch v := fallback.(type) {
 	case string:
-		return strings.FieldsFunc(val, func(r rune) bool {
-			return r == ',' || unicode.IsSpace(r)
-		})
+		return v
+	case []any:
+		return strings.Join(stringSliceValue(v), " ")
 	default:
+		return ""
+	}
+}
+
+// stringSliceValue returns v as a []string if v is a []any (dropping any
+// non-string element), or nil for any other type, including a genuinely
+// absent key.
+func stringSliceValue(v any) []string {
+	val, ok := v.([]any)
+	if !ok {
 		return nil
 	}
+
+	out := make([]string, 0, len(val))
+
+	for _, item := range val {
+		if s, ok := item.(string); ok {
+			out = append(out, s)
+		}
+	}
+
+	return out
 }
 
 // mapValue returns v as a map[string]any, or nil if v is not one.

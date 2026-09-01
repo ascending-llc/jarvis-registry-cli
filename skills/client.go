@@ -35,7 +35,7 @@ type (
 
 	// Content is the decoded response body of a get-skill-content
 	// request.
-	Content struct { //nolint:govet // fieldalignment: field order is kept readable/logical, not packed for size
+	Content struct { //nolint:govet // fieldalignment: field order is kept readable/logical, not packed for size. Inline, not a .golangci.yaml exclusions.rules entry, because fieldalignment's diagnostic text encodes struct-specific byte-count arithmetic and can't be pinned to a stable text: regex the way this repo's other suppressions can.
 		Id          string         `json:"id"`
 		Name        string         `json:"name"`
 		Description string         `json:"description"`

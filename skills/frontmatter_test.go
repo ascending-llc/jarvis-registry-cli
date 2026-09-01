@@ -172,7 +172,7 @@ func TestRenderSkillMarkdown(t *testing.T) {
 
 				assert.Equal(t, "remote-name-1", stringValue(fm["name"]))
 				assert.Equal(t, "A registry skill.", stringValue(fm["description"]))
-				assert.Equal(t, []string{"Bash", "Read"}, stringSliceValue(fm["allowed-tools"]))
+				assert.Equal(t, "Bash Read", stringValue(fm["allowed-tools"]))
 				assert.Equal(t, "MIT", stringValue(fm["license"]))
 				assert.Equal(t, "Claude Code >= 1.0", stringValue(fm["compatibility"]))
 				assert.Equal(t, "# Some Skill\n\nDoes a thing.", body)
@@ -199,7 +199,7 @@ func TestRenderSkillMarkdown(t *testing.T) {
 
 				assert.Equal(t, "chat-skill", stringValue(fm["name"]))
 				assert.Equal(t, "Inline description.", stringValue(fm["description"]))
-				assert.Equal(t, []string{"Write"}, stringSliceValue(fm["allowed-tools"]))
+				assert.Equal(t, "Write", stringValue(fm["allowed-tools"]))
 				assert.Equal(t, "Apache-2.0", stringValue(fm["license"]))
 				assert.Equal(t, "Chat authored body content.", body)
 				assert.NotContains(t, body, "---", "the inline frontmatter block must not remain in the body")
@@ -311,7 +311,7 @@ func TestRenderSkillMarkdown(t *testing.T) {
 				fm, _, err := splitFrontmatter(rendered)
 				require.NoError(t, err, "rendered output should itself be a valid SKILL.md")
 
-				assert.Equal(t, []string{"Bash"}, stringSliceValue(fm["allowed-tools"]))
+				assert.Equal(t, "Bash", stringValue(fm["allowed-tools"]))
 			},
 		},
 		{
@@ -331,7 +331,7 @@ func TestRenderSkillMarkdown(t *testing.T) {
 				fm, _, err := splitFrontmatter(rendered)
 				require.NoError(t, err, "rendered output should itself be a valid SKILL.md")
 
-				assert.Equal(t, []string{"Read", "Write"}, stringSliceValue(fm["allowed-tools"]))
+				assert.Equal(t, "Read Write", stringValue(fm["allowed-tools"]))
 			},
 		},
 		{
@@ -421,7 +421,7 @@ func TestRenderSkillMarkdown(t *testing.T) {
 			},
 		},
 		{
-			name: "an inline body's allowed-tools written as the Agent Skills spec's space-/comma-separated string round-trips into its constituent entries",
+			name: "an inline body's string-form allowed-tools passes through the rendered file byte-for-byte, not tokenized and rejoined",
 			run: func(t *testing.T) {
 				t.Helper()
 
@@ -433,7 +433,23 @@ func TestRenderSkillMarkdown(t *testing.T) {
 				fm, _, err := splitFrontmatter(rendered)
 				require.NoError(t, err, "rendered output should itself be a valid SKILL.md")
 
-				assert.Equal(t, []string{"Bash", "Read", "Write"}, stringSliceValue(fm["allowed-tools"]), "the comma-/space-separated string must have been split into its constituent tool entries, not dropped")
+				assert.Equal(t, "Bash, Read  Write", stringValue(fm["allowed-tools"]), "a string-form allowed-tools value must survive verbatim, not be dropped and not be re-tokenized")
+			},
+		},
+		{
+			name: "an inline body's allowed-tools entry containing an internal comma inside a Tool(...) specifier is not corrupted by tokenizing and rejoining",
+			run: func(t *testing.T) {
+				t.Helper()
+
+				content := Content{Body: "---\ndescription: d\nallowed-tools: Bash(echo a, b) Read\n---\n\nBody."}
+
+				rendered, err := renderSkillMarkdown(content, "paren-comma-tools-skill")
+				require.NoError(t, err, "renderSkillMarkdown should succeed")
+
+				fm, _, err := splitFrontmatter(rendered)
+				require.NoError(t, err, "rendered output should itself be a valid SKILL.md")
+
+				assert.Equal(t, "Bash(echo a, b) Read", stringValue(fm["allowed-tools"]), "the comma inside the parenthesized specifier must survive, not be treated as an entry separator")
 			},
 		},
 		{
