@@ -106,9 +106,15 @@ func splitFrontmatter(body string) (frontmatter map[string]any, rest string, err
 }
 
 // indexClosingFence returns the byte offset within s of the newline
-// immediately preceding the first line that consists solely of "---" (an
-// optional trailing "\r" before that newline is tolerated), or -1 if s has
-// no such line. s[idx+4:] is always exactly what follows the 3 closing
+// immediately preceding the first line that consists solely of "---",
+// terminated by "\n", "\r\n", or the end of s — matching the
+// commonly-accepted frontmatter convention, where the only valid line
+// terminators are LF and CRLF. A bare "\r" not followed by "\n" does not
+// count: that candidate line is skipped and scanning continues, since a
+// lone CR is not a recognized line terminator (see
+// .working-docs/spec/python-fm-parse.md for how Registry's own
+// _parse_frontmatter diverges from this same convention). Returns -1 if s
+// has no such line. s[idx+4:] is always exactly what follows the 3 closing
 // dashes, since idx always points at a "\n" and the fence line itself is
 // always "\n---" — 4 bytes.
 func indexClosingFence(s string) int {
@@ -123,7 +129,7 @@ func indexClosingFence(s string) int {
 		}
 
 		after := rest[3:]
-		if after == "" || after[0] == '\n' || after[0] == '\r' {
+		if after == "" || after[0] == '\n' || strings.HasPrefix(after, "\r\n") {
 			return i
 		}
 	}

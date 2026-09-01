@@ -68,6 +68,15 @@ func TestSplitFrontmatter(t *testing.T) {
 			wantFM:   map[string]any{"name": "foo"},
 			wantRest: "Body.",
 		},
+		{
+			// A bare CR is not a recognized line terminator (only "\n" and
+			// "\r\n" are), so this candidate close is skipped; since there
+			// is no other "---" in the body, no closing fence is ever
+			// found.
+			name:    "bare CR not followed by LF does not terminate the closing fence",
+			body:    "---\nname: foo\n---\rnot a real close, since a lone CR doesn't end a line",
+			wantErr: "no closing frontmatter fence",
+		},
 	}
 
 	for _, c := range cases {
