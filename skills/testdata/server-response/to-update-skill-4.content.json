@@ -1,0 +1,10 @@
+{
+  "description": "This represents a to-be-updated skill that exists at both local and remote, where the contents and the \"version\" in local manifest should be updated.",
+  "body": "This represents the new skill contents at version 4.\n",
+  "frontmatter": {
+    "license": "MIT"
+  },
+  "disableModelInvocation": false,
+  "userInvocable": true,
+  "allowedTools": null
+}

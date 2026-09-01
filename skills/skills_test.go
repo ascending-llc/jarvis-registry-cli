@@ -52,6 +52,45 @@ func TestIsSafeSkillName(t *testing.T) {
 	}
 }
 
+func TestSyncCommandAfterApply(t *testing.T) {
+	cases := []struct {
+		name            string
+		baseUrl         string
+		authBaseUrl     string
+		wantAuthBaseUrl string
+	}{
+		{name: "distinct auth_base_url is wired through as-is", baseUrl: "https://registry.example.com", authBaseUrl: "http://localhost:8888", wantAuthBaseUrl: "http://localhost:8888"},
+		{name: "auth_base_url defaulted to base_url by cfg.Load is wired through as-is", baseUrl: "https://registry.example.com", authBaseUrl: "https://registry.example.com", wantAuthBaseUrl: "https://registry.example.com"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cmd := SyncCommand{}
+
+			err := cmd.BeforeReset()
+			require.NoError(t, err, "should be able to call SyncCommand.BeforeReset without error")
+
+			cmd.configLoadFunc = func(string) (cfg.Config, error) {
+				var config cfg.Config
+
+				config.Registry.BaseUrl = c.baseUrl
+				config.Registry.AuthBaseUrl = c.authBaseUrl
+				config.Local.Dest = t.TempDir()
+
+				return config, nil
+			}
+
+			err = cmd.AfterApply()
+			require.NoError(t, err, "should be able to call SyncCommand.AfterApply without error")
+
+			assert.Equal(t, c.baseUrl, cmd.baseUrl, "baseUrl should be taken from config.Registry.BaseUrl")
+			assert.Equal(t, c.wantAuthBaseUrl, cmd.authBaseUrl, "authBaseUrl should be taken from config.Registry.AuthBaseUrl, distinct from baseUrl when cfg.Load resolved it that way")
+
+			require.NotNil(t, cmd.tp, "tp should be initialized")
+		})
+	}
+}
+
 func TestSyncCommandRun(t *testing.T) {
 	listSkillsRespBody, err := os.ReadFile(filepath.Join("testdata", "server-response", "list.json"))
 	require.NoError(t, err, "should be able to read the mocked list_skills response from a local file")
@@ -66,10 +105,18 @@ func TestSyncCommandRun(t *testing.T) {
 	var content []byte
 
 	for _, meta := range remoteSKills.Skills {
-		content, err = os.ReadFile(filepath.Join("testdata", "server-response", meta.Name, "SKILL.md"))
-		require.NoError(t, err, fmt.Sprintf("should be able to read the mock remote skill content for skill %s", meta.Name))
+		content, err = os.ReadFile(filepath.Join("testdata", "server-response", meta.Name+".content.json"))
+		require.NoError(t, err, fmt.Sprintf("should be able to read the mock get_skill_content fixture for skill %s", meta.Name))
 
-		content, err = json.Marshal(Content{Id: meta.Id, Name: meta.Name, Body: string(content)})
+		var apiContent Content
+
+		err = json.Unmarshal(content, &apiContent)
+		require.NoError(t, err, fmt.Sprintf("should be able to unmarshal the mock get_skill_content fixture for skill %s", meta.Name))
+
+		apiContent.Id = meta.Id
+		apiContent.Name = meta.Name
+
+		content, err = json.Marshal(apiContent)
 		require.NoError(t, err, fmt.Sprintf("should be able to serialize get_skill_content response for skill %s", meta.Name))
 
 		skillContentRespMap[meta.Id] = content
@@ -119,7 +166,7 @@ func TestSyncCommandRun(t *testing.T) {
 		require.NoError(t, err, "should be able to copy the initial-state fixture directory tree to the mocked skills directory")
 
 		err = cmd.Run()
-		require.NoError(t, err, "should be able to call SyncCommand.Run without error")
+		assertPartialFailure(t, err)
 
 		assertSyncResult(t, mockSkillsDir, registryDir)
 	})
@@ -128,7 +175,7 @@ func TestSyncCommandRun(t *testing.T) {
 		cmd, mockSkillsDir, registryDir := newTestSyncSetup(t, ts)
 
 		err := cmd.Run()
-		require.NoError(t, err, "should be able to call SyncCommand.Run without error")
+		assertPartialFailure(t, err)
 
 		assertSyncResult(t, mockSkillsDir, registryDir)
 	})
@@ -199,6 +246,8 @@ func newTestSyncSetup(t *testing.T, ts *httptest.Server) (cmd SyncCommand, mockS
 
 		config.Registry.BaseUrl = ts.URL
 
+		config.Registry.AuthBaseUrl = ts.URL
+
 		config.Local.Dest = mockSkillsDir
 
 		return config, nil
@@ -215,6 +264,19 @@ func newTestSyncSetup(t *testing.T, ts *httptest.Server) (cmd SyncCommand, mockS
 	cmd.tp = MockTokenProvider{}
 
 	return cmd, mockSkillsDir, registryDir
+}
+
+// assertPartialFailure asserts that Run returned the error expected from
+// the shared test fixtures' one deliberately malformed skill
+// ("malformed-skill-10", whose resolved description is empty across every
+// source) — proving a single per-skill render failure surfaces on the
+// command's returned error without aborting the rest of the sync.
+func assertPartialFailure(t *testing.T, err error) {
+	t.Helper()
+
+	require.Error(t, err, "SyncCommand.Run should return a non-nil error because of the one malformed skill")
+	assert.Contains(t, err.Error(), "malformed-skill-10", "the returned error should name the malformed skill")
+	assert.Contains(t, err.Error(), "resolved description is empty", "the returned error should explain why rendering failed")
 }
 
 func assertSyncResult(t *testing.T, mockSkillsDir, registryDir string) {

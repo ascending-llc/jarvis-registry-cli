@@ -1,0 +1,8 @@
+{
+  "description": "",
+  "body": "This skill has no description anywhere and must fail to sync.\n",
+  "frontmatter": null,
+  "disableModelInvocation": false,
+  "userInvocable": true,
+  "allowedTools": null
+}

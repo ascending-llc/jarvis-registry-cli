@@ -39,6 +39,7 @@ type (
 		destDir        string
 		tempDir        string
 		baseUrl        string
+		authBaseUrl    string
 		logger         Logger
 		configLoadFunc func(string) (cfg.Config, error)
 		tp             TokenProvider
@@ -94,8 +95,8 @@ func (c *SyncCommand) BeforeReset() (err error) {
 }
 
 // AfterApply derives SyncCommand's remaining dependencies from the loaded
-// config: the registry directory, destination folder, Registry base URL,
-// and token provider.
+// config: the registry directory, destination folder, Registry and
+// auth-server base URLs, and token provider.
 func (c *SyncCommand) AfterApply() (err error) {
 	c.registryDir = filepath.Join(c.userHomeDir, registryDirName)
 
@@ -108,7 +109,9 @@ func (c *SyncCommand) AfterApply() (err error) {
 
 	c.baseUrl = config.Registry.BaseUrl
 
-	c.tp = auth.NewRegistryTokenResolver(c.baseUrl, []string{skillsReadScope}, c.logger)
+	c.authBaseUrl = config.Registry.AuthBaseUrl
+
+	c.tp = auth.NewRegistryTokenResolver(c.authBaseUrl, []string{skillsReadScope}, c.logger)
 
 	return nil
 }
@@ -116,7 +119,13 @@ func (c *SyncCommand) AfterApply() (err error) {
 // Run resolves a Registry access token, then reconciles the local skills
 // folder against the Registry: skills no longer accessible are deleted,
 // existing skills are updated in place, and new skills are created,
-// before the sync manifest is rewritten to reflect the new state.
+// before the sync manifest is rewritten to reflect the new state. A skill
+// that individually fails to sync (e.g. its remote content has
+// unreconcilable frontmatter) does not prevent any other skill in the same
+// run from syncing: Run still persists every skill that succeeded to the
+// manifest, but returns a non-nil error naming the ones that failed, so the
+// command's own exit code/output is the only signal of a partial
+// failure — nothing is silently swallowed.
 func (c *SyncCommand) Run() (err error) {
 	// initialize the final two dependencies c.client and c.mrw
 	token, err := c.tp.GetAccessToken()
@@ -182,26 +191,37 @@ func (c *SyncCommand) Run() (err error) {
 
 	defer func() { _ = os.RemoveAll(c.tempDir) }()
 
-	updatedSkills, err := c.boundedFanOut(toUpdate, c.stageOne)
-	if err != nil {
-		return fmt.Errorf("failed to update certain skills: %s", err.Error())
-	}
+	updatedSkills, updateErr := c.boundedFanOut(toUpdate, c.stageOne)
 
 	if err = c.commitStaged(toUpdate); err != nil {
 		return fmt.Errorf("failed to finalize updated skills: %s", err.Error())
 	}
 
-	createdSkills, err := c.boundedFanOut(toCreate, c.createOne)
-	if err != nil {
-		return fmt.Errorf("failed to create certain skills: %s", err.Error())
-	}
+	createdSkills, createErr := c.boundedFanOut(toCreate, c.createOne)
 
-	// write the new manifest file
-	if err = c.mrw.WriteManifest(slices.Concat(updatedSkills, createdSkills)); err != nil {
+	// write the new manifest file with whatever succeeded; a per-skill
+	// failure (e.g. invalid frontmatter) must not prevent every other skill
+	// in this run from being synced and recorded.
+	succeeded := succeededOnly(slices.Concat(updatedSkills, createdSkills))
+	if err = c.mrw.WriteManifest(succeeded); err != nil {
 		return fmt.Errorf("failed to write manifest file after syncing: %s", err.Error())
 	}
 
-	return nil
+	return errors.Join(updateErr, createErr)
+}
+
+// succeededOnly filters out the zero-value Metadata entries boundedFanOut
+// leaves at the index of any spec whose SyncFn call returned an error.
+func succeededOnly(skills []Metadata) []Metadata {
+	result := make([]Metadata, 0, len(skills))
+
+	for _, s := range skills {
+		if s.Id != "" {
+			result = append(result, s)
+		}
+	}
+
+	return result
 }
 
 // isSafeSkillName reports whether name can be safely used as a single
@@ -299,11 +319,16 @@ func (c *SyncCommand) createOne(spec SyncSpec) (Metadata, error) {
 		return Metadata{}, fmt.Errorf("failed to retrieve contents for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())
 	}
 
+	rendered, err := renderSkillMarkdown(content, spec.RemoteName)
+	if err != nil {
+		return Metadata{}, fmt.Errorf("failed to render SKILL.md for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())
+	}
+
 	if err = os.Mkdir(filepath.Join(c.destDir, spec.RemoteName), 0755); err != nil {
 		return Metadata{}, fmt.Errorf("failed to create folder for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())
 	}
 
-	if err = os.WriteFile(filepath.Join(c.destDir, spec.RemoteName, "SKILL.md"), []byte(content.Body), 0644); err != nil {
+	if err = os.WriteFile(filepath.Join(c.destDir, spec.RemoteName, "SKILL.md"), []byte(rendered), 0644); err != nil {
 		return Metadata{}, fmt.Errorf("failed to write SKILL.md file for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())
 	}
 
@@ -345,6 +370,11 @@ func (c *SyncCommand) stageOne(spec SyncSpec) (Metadata, error) {
 		return Metadata{}, fmt.Errorf("failed to retrieve contents for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())
 	}
 
+	rendered, err := renderSkillMarkdown(content, spec.RemoteName)
+	if err != nil {
+		return Metadata{}, fmt.Errorf("failed to render SKILL.md for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())
+	}
+
 	if err = os.RemoveAll(filepath.Join(c.destDir, spec.LocalName)); err != nil {
 		return Metadata{}, fmt.Errorf("failed to remove outdated local skill %s, version %d: %s", spec.LocalName, spec.LocalVersion, err.Error())
 	}
@@ -353,7 +383,7 @@ func (c *SyncCommand) stageOne(spec SyncSpec) (Metadata, error) {
 		return Metadata{}, fmt.Errorf("failed to stage folder for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())
 	}
 
-	if err = os.WriteFile(filepath.Join(c.tempDir, spec.RemoteName, "SKILL.md"), []byte(content.Body), 0644); err != nil {
+	if err = os.WriteFile(filepath.Join(c.tempDir, spec.RemoteName, "SKILL.md"), []byte(rendered), 0644); err != nil {
 		return Metadata{}, fmt.Errorf("failed to write SKILL.md file for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())
 	}
 

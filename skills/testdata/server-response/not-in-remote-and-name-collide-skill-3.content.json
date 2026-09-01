@@ -1,0 +1,13 @@
+{
+  "description": "This represents a remote skill whose name collides with a different local skill's outdated name.",
+  "body": "This represents the case where a stale local folder of the same name is deleted before this skill is (re)created at `version` 6.\n",
+  "frontmatter": {
+    "allowedTools": [
+      "Bash",
+      "Read"
+    ]
+  },
+  "disableModelInvocation": false,
+  "userInvocable": true,
+  "allowedTools": null
+}

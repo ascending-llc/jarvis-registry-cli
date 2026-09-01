@@ -1,0 +1,8 @@
+{
+  "description": "This skill prints out \"to-create-skill-7\".",
+  "body": "This represents a skill that exists at remote but not at local, with no naming conflict against\nanything already present locally.\nIt should be newly created after the sync at `version` 7.\n",
+  "frontmatter": {},
+  "disableModelInvocation": false,
+  "userInvocable": false,
+  "allowedTools": null
+}

@@ -34,6 +34,11 @@
       "id": "6a1367200d32ee7200500009",
       "name": "swap-skill-alpha",
       "version": 2
+    },
+    {
+      "id": "6a1367200d32ee7200500010",
+      "name": "malformed-skill-10",
+      "version": 10
     }
   ]
 }

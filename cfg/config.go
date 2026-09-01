@@ -19,6 +19,15 @@ type (
 	Config struct {
 		Registry struct {
 			BaseUrl string `mapstructure:"base_url"`
+
+			// AuthBaseUrl is the origin the CLI performs the OAuth device/
+			// token flow against. It defaults to BaseUrl, which is correct
+			// whenever the Registry API and its auth-server share a single
+			// origin (as they do in every non-local deployment, fronted by
+			// the same ALB). It only needs to be set explicitly when they
+			// don't — e.g. local development, where the auth-server and the
+			// Registry API listen on different localhost ports.
+			AuthBaseUrl string `mapstructure:"auth_base_url"`
 		} `mapstructure:"registry"`
 
 		Local struct {
@@ -35,7 +44,8 @@ var homeTokenPattern = regexp.MustCompile(`\$(?:HOME|USERPROFILE)\b|\$\{(?:HOME|
 
 // Load reads config.yaml (or config.yml) from registryDir, unmarshals it
 // into a Config, and validates and resolves its fields — expanding
-// Local.Dest to an absolute path and normalizing Registry.BaseUrl. It
+// Local.Dest to an absolute path, normalizing Registry.BaseUrl, and
+// defaulting Registry.AuthBaseUrl to Registry.BaseUrl when it isn't set. It
 // returns an error if neither file exists, the file cannot be parsed, or
 // validation fails.
 func Load(registryDir string) (config Config, err error) {
@@ -69,6 +79,14 @@ func Load(registryDir string) (config Config, err error) {
 
 	if err = validateBaseUrl(config.Registry.BaseUrl); err != nil {
 		return config, fmt.Errorf("invalid registry.base_url in %s: %s", path, err.Error())
+	}
+
+	config.Registry.AuthBaseUrl = strings.TrimSuffix(config.Registry.AuthBaseUrl, "/")
+
+	if config.Registry.AuthBaseUrl == "" {
+		config.Registry.AuthBaseUrl = config.Registry.BaseUrl
+	} else if err = validateBaseUrl(config.Registry.AuthBaseUrl); err != nil {
+		return config, fmt.Errorf("invalid registry.auth_base_url in %s: %s", path, err.Error())
 	}
 
 	return config, nil
@@ -121,7 +139,8 @@ func resolveDest(dest string) (string, error) {
 }
 
 // validateBaseUrl requires raw to be a well-formed URL with an https scheme
-// and a non-empty host.
+// and a non-empty host. As an exception for local testing, http is also
+// accepted when the host is "localhost" or "127.0.0.1", at any port.
 func validateBaseUrl(raw string) error {
 	if raw == "" {
 		return errors.New("URL must not be empty")
@@ -132,8 +151,9 @@ func validateBaseUrl(raw string) error {
 		return fmt.Errorf("not a valid URL: %s", err.Error())
 	}
 
-	if u.Scheme != "https" {
-		return fmt.Errorf("scheme must be https, got %q", u.Scheme)
+	isLocalHTTP := u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1")
+	if u.Scheme != "https" && !isLocalHTTP {
+		return fmt.Errorf("scheme must be https, or http for localhost/127.0.0.1, got %q", u.Scheme)
 	}
 
 	if u.Host == "" {

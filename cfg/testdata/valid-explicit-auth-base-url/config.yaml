@@ -1,0 +1,6 @@
+local:
+  destination_folder: "~/jarvis-registry-cli-test-dest"
+
+registry:
+  base_url: "https://registry.example.com"
+  auth_base_url: "https://auth.example.com/"

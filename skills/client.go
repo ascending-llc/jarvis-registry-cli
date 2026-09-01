@@ -35,10 +35,22 @@ type (
 
 	// Content is the decoded response body of a get-skill-content
 	// request.
-	Content struct {
-		Id   string `json:"id"`
-		Name string `json:"name"`
-		Body string `json:"body"`
+	Content struct { //nolint:govet // fieldalignment: field order is kept readable/logical, not packed for size. Inline, not a .golangci.yaml exclusions.rules entry, because fieldalignment's diagnostic text encodes struct-specific byte-count arithmetic and can't be pinned to a stable text: regex the way this repo's other suppressions can.
+		Id          string         `json:"id"`
+		Name        string         `json:"name"`
+		Description string         `json:"description"`
+		Body        string         `json:"body"`
+		Frontmatter map[string]any `json:"frontmatter"`
+
+		DisableModelInvocation bool `json:"disableModelInvocation"`
+		UserInvocable          bool `json:"userInvocable"`
+
+		// AllowedTools is nullable on the real API response (list[str] |
+		// None), which encoding/json preserves as the nil/non-nil
+		// distinction on this field — renderSkillMarkdown relies on that to
+		// tell "not specified, fall back to frontmatter" apart from an
+		// explicit empty list.
+		AllowedTools []string `json:"allowedTools"`
 	}
 )
 

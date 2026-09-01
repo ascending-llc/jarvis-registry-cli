@@ -47,7 +47,13 @@ type (
 )
 
 const (
-	ascendingService = "ascendingdc.com"
+	// jarvisRegistryService is the Keychain "service" namespace prefix for
+	// this CLI's cached credentials. NewRegistryTokenResolver combines it
+	// with the target Registry's baseUrl so tokens for different Registry
+	// deployments (e.g. a local dev server vs. a client's production
+	// instance) are cached under distinct Keychain entries instead of
+	// overwriting each other.
+	jarvisRegistryService = "jarvis-registry"
 
 	jarvisRegistryCli = "jarvis-registry-cli"
 
@@ -60,18 +66,21 @@ const (
 	expiration = time.Minute * 59
 )
 
-// NewRegistryTokenResolver builds a RegistryTokenResolver for the Registry
-// at baseUrl, requesting the given OAuth scopes. logger receives
+// NewRegistryTokenResolver builds a RegistryTokenResolver against the
+// OAuth device/token endpoints at authServerBaseUrl, requesting the given
+// OAuth scopes. authServerBaseUrl is usually the same origin as the
+// Registry API itself, but callers may pass a different one when the two
+// don't share an origin (e.g. local development). logger receives
 // diagnostic messages for non-fatal failures, such as failing to cache a
 // newly obtained token.
-func NewRegistryTokenResolver(baseUrl string, scopes []string, logger Logger) RegistryTokenResolver {
-	baseUrl = strings.TrimSuffix(baseUrl, "/")
+func NewRegistryTokenResolver(authServerBaseUrl string, scopes []string, logger Logger) RegistryTokenResolver {
+	authServerBaseUrl = strings.TrimSuffix(authServerBaseUrl, "/")
 
 	r := RegistryTokenResolver{
 		logger:        logger,
-		creds:         creds.NewReadWriter(ascendingService, jarvisRegistryCli),
-		deviceCodeUrl: baseUrl + deviceCodePath,
-		tokenUrl:      baseUrl + tokenPath,
+		creds:         creds.NewReadWriter(fmt.Sprintf("%s:%s", jarvisRegistryService, authServerBaseUrl), jarvisRegistryCli),
+		deviceCodeUrl: authServerBaseUrl + deviceCodePath,
+		tokenUrl:      authServerBaseUrl + tokenPath,
 		scopes:        scopes,
 	}
 
