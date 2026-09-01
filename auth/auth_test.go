@@ -42,6 +42,34 @@ func TestNewRegistryTokenResolver(t *testing.T) {
 	assert.Same(t, registryHttp.DefaultClient, r.flow.HTTPClient, "flow.HTTPClient should be the shared, timeout-bounded internal/http.DefaultClient rather than the zero-value http.DefaultClient, so the device flow's HTTP calls cannot hang indefinitely on a stalled connection")
 }
 
+func TestNewRegistryTokenResolver_CredsScopedToBaseUrl(t *testing.T) {
+	logger := log.New(io.Discard, "", 0)
+	scopes := []string{"registry:read"}
+
+	cases := []struct {
+		name        string
+		baseUrl     string
+		wantService string
+	}{
+		{name: "trailing slash is trimmed before scoping", baseUrl: "https://registry.example.com/", wantService: "jarvis-registry:https://registry.example.com"},
+		{name: "distinct baseUrl scopes to a distinct service", baseUrl: "http://localhost:8080", wantService: "jarvis-registry:http://localhost:8080"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			keyring.MockInit()
+
+			r := NewRegistryTokenResolver(c.baseUrl, scopes, logger)
+
+			require.NoError(t, r.creds.Write([]byte("probe")), "should be able to write through the resolver's creds")
+
+			got, err := keyring.Get(c.wantService, jarvisRegistryCli)
+			require.NoError(t, err, "the resolver's creds should be readable under the expected baseUrl-scoped service and the fixed jarvisRegistryCli account")
+			assert.Equal(t, "probe", got, "the value written through the resolver's creds should round-trip under the expected service/account pair")
+		})
+	}
+}
+
 func TestGetAccessToken(t *testing.T) {
 	t.Run("cached token still valid returns it without any network call", func(t *testing.T) {
 		ts := newAuthServer(t, failIfCalled(t, "device code"), failIfCalled(t, "refresh"))

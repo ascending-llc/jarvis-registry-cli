@@ -47,7 +47,13 @@ type (
 )
 
 const (
-	ascendingService = "ascendingdc.com"
+	// jarvisRegistryService is the Keychain "service" namespace prefix for
+	// this CLI's cached credentials. NewRegistryTokenResolver combines it
+	// with the target Registry's baseUrl so tokens for different Registry
+	// deployments (e.g. a local dev server vs. a client's production
+	// instance) are cached under distinct Keychain entries instead of
+	// overwriting each other.
+	jarvisRegistryService = "jarvis-registry"
 
 	jarvisRegistryCli = "jarvis-registry-cli"
 
@@ -69,7 +75,7 @@ func NewRegistryTokenResolver(baseUrl string, scopes []string, logger Logger) Re
 
 	r := RegistryTokenResolver{
 		logger:        logger,
-		creds:         creds.NewReadWriter(ascendingService, jarvisRegistryCli),
+		creds:         creds.NewReadWriter(fmt.Sprintf("%s:%s", jarvisRegistryService, baseUrl), jarvisRegistryCli),
 		deviceCodeUrl: baseUrl + deviceCodePath,
 		tokenUrl:      baseUrl + tokenPath,
 		scopes:        scopes,
