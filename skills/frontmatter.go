@@ -82,8 +82,9 @@ func splitFrontmatter(body string) (frontmatter map[string]any, rest string, err
 
 	after := trimmed[3:]
 
-	if after != "" && after[0] != '\n' && after[0] != '\r' {
-		// e.g. "---foo:" is not a fence line.
+	if after != "" && after[0] != '\n' && !strings.HasPrefix(after, "\r\n") {
+		// e.g. "---foo:" is not a fence line; a bare "\r" alone isn't a
+		// recognized line terminator either (see indexClosingFence).
 		return nil, body, nil
 	}
 

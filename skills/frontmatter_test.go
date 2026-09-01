@@ -77,6 +77,14 @@ func TestSplitFrontmatter(t *testing.T) {
 			body:    "---\nname: foo\n---\rnot a real close, since a lone CR doesn't end a line",
 			wantErr: "no closing frontmatter fence",
 		},
+		{
+			// Same rule applied to the opening fence: "---" followed by a
+			// bare CR isn't a recognized fence line, so this is treated the
+			// same as "---foo:" — not frontmatter at all, body unchanged.
+			name:     "bare CR after opening fence does not start a frontmatter block",
+			body:     "---\rname: foo\r---\rBody.",
+			wantRest: "---\rname: foo\r---\rBody.",
+		},
 	}
 
 	for _, c := range cases {
