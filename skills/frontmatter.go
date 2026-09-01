@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -13,9 +14,15 @@ import (
 // map iteration order; this struct makes yaml.Marshal's output deterministic
 // and matches the real Claude Code spec's field order.
 type claudeCodeFrontmatter struct { //nolint:govet // fieldalignment: field order is the on-disk YAML key order (yaml.Marshal follows struct declaration order), not packed for size
-	Name         string   `yaml:"name"`
-	Description  string   `yaml:"description"`
-	AllowedTools []string `yaml:"allowed-tools,omitempty"`
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+
+	// AllowedTools is a single space-joined string, not a YAML list,
+	// regardless of whether the source value was a YAML list or a
+	// space-/comma-separated string — matching Claude Code's own canonical
+	// multi-entry example rather than reproducing whichever source supplied
+	// the value.
+	AllowedTools string `yaml:"allowed-tools,omitempty"`
 
 	License                string `yaml:"license,omitempty"`
 	Compatibility          string `yaml:"compatibility,omitempty"`
@@ -36,34 +43,24 @@ type claudeCodeFrontmatter struct { //nolint:govet // fieldalignment: field orde
 	Metadata map[string]any `yaml:"metadata,omitempty"`
 }
 
-var (
-	// claudeCodeFrontmatterCamelToKebab maps each recognized SKILL.md
-	// frontmatter field's canonical kebab-case key to the camelCase key
-	// Registry's API uses for the same field. Keys not listed here (license,
-	// compatibility, metadata, model, context, agent, hooks) are spelled
-	// identically in both cases and need no entry.
-	claudeCodeFrontmatterCamelToKebab = map[string]string{
-		"allowedTools":           "allowed-tools",
-		"argumentHint":           "argument-hint",
-		"disableModelInvocation": "disable-model-invocation",
-		"userInvocable":          "user-invocable",
-	}
-
-	// claudeCodeFrontmatterKnownKeys is the fixed set of canonical kebab-case
-	// keys recognized as real SKILL.md frontmatter fields that participate in
-	// the generic key-by-key merge in renderSkillMarkdown; anything else
-	// found while merging is folded into `metadata` rather than dropped or
-	// emitted as a bogus top-level key. "name", "description",
-	// "disable-model-invocation", and "user-invocable" are deliberately
-	// absent: renderSkillMarkdown resolves those 4 fields through their own
-	// dedicated rules, never the generic merge, and deletes any copy of them
-	// out of the merged map before this set is consulted — so they never
-	// need an entry here.
-	claudeCodeFrontmatterKnownKeys = map[string]bool{
-		"allowed-tools": true, "license": true, "compatibility": true, "metadata": true,
-		"argument-hint": true, "model": true, "context": true, "agent": true, "hooks": true,
-	}
-)
+// claudeCodeFrontmatterCamelToKebab maps each field's camelCase spelling —
+// how Registry's content.Frontmatter writes it — to its kebab-case spelling
+// — how a real SKILL.md's inline frontmatter writes it — so the merge in
+// renderSkillMarkdown can treat both as the same field regardless of which
+// source they came from. This is a narrower concern than "which fields this
+// CLI knows about": a key absent from this table (license, compatibility,
+// metadata, model, context, agent, hooks, and any field this CLI has no
+// struct field for) is spelled identically in both cases and needs no
+// entry — it passes through the merge and the final render under its own
+// single spelling, preserved rather than dropped (see renderSkillMarkdown's
+// leftover-key handling).
+var claudeCodeFrontmatterCamelToKebab = map[string]string{
+	"allowedTools":           "allowed-tools",
+	"disallowedTools":        "disallowed-tools",
+	"argumentHint":           "argument-hint",
+	"disableModelInvocation": "disable-model-invocation",
+	"userInvocable":          "user-invocable",
+}
 
 // splitFrontmatter splits a SKILL.md body into its optional leading YAML
 // frontmatter block and the remaining markdown. A body with no leading
@@ -140,8 +137,9 @@ func indexClosingFence(s string) int {
 
 // canonicalizeFrontmatterKeys renames every key with a
 // claudeCodeFrontmatterCamelToKebab entry to its kebab-case form, leaving
-// every other key — including genuinely unrecognized ones — untouched, to be
-// sorted into known/unknown later against claudeCodeFrontmatterKnownKeys.
+// every other key — including ones this CLI has no dedicated struct field
+// for — untouched; renderSkillMarkdown preserves those as their own
+// top-level keys rather than dropping or relocating them.
 func canonicalizeFrontmatterKeys(fm map[string]any) map[string]any {
 	if fm == nil {
 		return nil
@@ -197,43 +195,15 @@ func renderSkillMarkdown(content Content, remoteName string) (string, error) {
 		}
 	}
 
-	// name/description are resolved above; disable-model-invocation and
-	// user-invocable always come from content's own top-level fields below.
-	// None of the 4 belong to the generic key-by-key merge, so any copy the
-	// merge picked up must be removed before folding leftover keys into
-	// metadata, or they would be duplicated there as if unrecognized.
-	delete(merged, "name")
-	delete(merged, "description")
-	delete(merged, "disable-model-invocation")
-	delete(merged, "user-invocable")
-
 	allowedTools := content.AllowedTools
 	if allowedTools == nil {
 		allowedTools = stringSliceValue(merged["allowed-tools"])
 	}
 
-	metadata := make(map[string]any)
-
-	for k, v := range merged {
-		if !claudeCodeFrontmatterKnownKeys[k] {
-			metadata[k] = v
-		}
-	}
-
-	if explicit, ok := merged["metadata"].(map[string]any); ok {
-		for k, v := range explicit {
-			metadata[k] = v
-		}
-	}
-
-	if len(metadata) == 0 {
-		metadata = nil
-	}
-
 	rendered := claudeCodeFrontmatter{
 		Name:                   remoteName,
 		Description:            description,
-		AllowedTools:           allowedTools,
+		AllowedTools:           strings.Join(allowedTools, " "),
 		License:                stringValue(merged["license"]),
 		Compatibility:          stringValue(merged["compatibility"]),
 		ArgumentHint:           stringValue(merged["argument-hint"]),
@@ -243,7 +213,24 @@ func renderSkillMarkdown(content Content, remoteName string) (string, error) {
 		Context:                stringValue(merged["context"]),
 		Agent:                  stringValue(merged["agent"]),
 		Hooks:                  mapValue(merged["hooks"]),
-		Metadata:               metadata,
+		Metadata:               mapValue(merged["metadata"]),
+	}
+
+	// Every field renderSkillMarkdown has just consumed, whether resolved
+	// through its own dedicated rule (name, description,
+	// disable-model-invocation, user-invocable) or read straight off merged
+	// above, is removed here. Whatever remains is a real frontmatter field
+	// this CLI has no dedicated struct field for (e.g. arguments,
+	// disallowed-tools, or any future Claude Code field) — it must be
+	// preserved as its own top-level key below, not dropped and not folded
+	// into metadata: Claude Code doesn't act on metadata's contents, so a
+	// field like arguments that drives real behavior would silently stop
+	// working if relocated there.
+	for _, k := range []string{
+		"name", "description", "allowed-tools", "license", "compatibility", "argument-hint",
+		"disable-model-invocation", "user-invocable", "model", "context", "agent", "hooks", "metadata",
+	} {
+		delete(merged, k)
 	}
 
 	yamlBytes, err := yaml.Marshal(rendered)
@@ -251,7 +238,16 @@ func renderSkillMarkdown(content Content, remoteName string) (string, error) {
 		return "", fmt.Errorf("failed to marshal SKILL.md frontmatter for %s: %s", remoteName, err.Error())
 	}
 
-	return "---\n" + string(yamlBytes) + "---\n\n" + strippedBody, nil
+	var leftoverBytes []byte
+
+	if len(merged) > 0 {
+		leftoverBytes, err = yaml.Marshal(merged)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal leftover SKILL.md frontmatter fields for %s: %s", remoteName, err.Error())
+		}
+	}
+
+	return "---\n" + string(yamlBytes) + string(leftoverBytes) + "---\n\n" + strippedBody, nil
 }
 
 // stringValue returns v as a string, or "" if v is nil or not a string.
@@ -261,24 +257,32 @@ func stringValue(v any) string {
 	return s
 }
 
-// stringSliceValue converts a YAML/JSON-decoded generic slice ([]any) into
-// a []string, dropping any non-string element. It returns nil for any other
-// type, including a genuinely absent key.
+// stringSliceValue converts a YAML/JSON-decoded value into a []string: a
+// []any (dropping any non-string element), or the Agent Skills spec's own
+// canonical space-/comma-separated string form (e.g. "Bash Read, Write"),
+// split on any run of commas/whitespace — mirroring AS-1820's own
+// _split_allowed_tools Pydantic validator, so both systems accept the same
+// input shapes for the same reason. Returns nil for any other type,
+// including a genuinely absent key.
 func stringSliceValue(v any) []string {
-	items, ok := v.([]any)
-	if !ok {
+	switch val := v.(type) {
+	case []any:
+		out := make([]string, 0, len(val))
+
+		for _, item := range val {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+
+		return out
+	case string:
+		return strings.FieldsFunc(val, func(r rune) bool {
+			return r == ',' || unicode.IsSpace(r)
+		})
+	default:
 		return nil
 	}
-
-	out := make([]string, 0, len(items))
-
-	for _, item := range items {
-		if s, ok := item.(string); ok {
-			out = append(out, s)
-		}
-	}
-
-	return out
 }
 
 // mapValue returns v as a map[string]any, or nil if v is not one.

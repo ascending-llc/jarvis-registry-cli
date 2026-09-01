@@ -118,6 +118,11 @@ func TestCanonicalizeFrontmatterKeys(t *testing.T) {
 			want: map[string]any{"allowed-tools": []any{"Bash"}, "user-invocable": false},
 		},
 		{
+			name: "disallowedTools is renamed even though it has no dedicated struct field",
+			in:   map[string]any{"disallowedTools": []any{"Bash"}},
+			want: map[string]any{"disallowed-tools": []any{"Bash"}},
+		},
+		{
 			name: "already-kebab keys are left alone",
 			in:   map[string]any{"allowed-tools": []any{"Bash"}},
 			want: map[string]any{"allowed-tools": []any{"Bash"}},
@@ -355,11 +360,11 @@ func TestRenderSkillMarkdown(t *testing.T) {
 			},
 		},
 		{
-			name: "an unrecognized frontmatter key folds into metadata instead of being dropped or left top-level",
+			name: "a frontmatter key this CLI has no dedicated struct field for is preserved as its own top-level key, not folded into metadata",
 			run: func(t *testing.T) {
 				t.Helper()
 
-				content := Content{Body: "---\ndescription: d\nfoo: bar\n---\n\nBody.", UserInvocable: true}
+				content := Content{Body: "---\ndescription: d\nfoo: bar\narguments: [subcommand]\n---\n\nBody.", UserInvocable: true}
 
 				rendered, err := renderSkillMarkdown(content, "unknown-key-skill")
 				require.NoError(t, err, "renderSkillMarkdown should succeed")
@@ -367,12 +372,91 @@ func TestRenderSkillMarkdown(t *testing.T) {
 				fm, _, err := splitFrontmatter(rendered)
 				require.NoError(t, err, "rendered output should itself be a valid SKILL.md")
 
-				_, topLevel := fm["foo"]
-				assert.False(t, topLevel, "unrecognized key must not appear as a bogus top-level key")
+				assert.Equal(t, "bar", stringValue(fm["foo"]), "unrecognized key should be preserved as its own top-level key")
+				assert.Equal(t, []string{"subcommand"}, stringSliceValue(fm["arguments"]), "a real Claude Code field this CLI has no struct field for must survive verbatim")
+				assert.Nil(t, mapValue(fm["metadata"]), "no explicit metadata was given, so metadata must not appear at all")
+			},
+		},
+		{
+			name: "content.Frontmatter's disallowedTools survives as the kebab-case disallowed-tools top-level key",
+			run: func(t *testing.T) {
+				t.Helper()
+
+				content := Content{
+					Description:   "d",
+					Body:          "Body.",
+					Frontmatter:   map[string]any{"disallowedTools": []any{"Bash"}},
+					UserInvocable: true,
+				}
+
+				rendered, err := renderSkillMarkdown(content, "disallowed-tools-skill")
+				require.NoError(t, err, "renderSkillMarkdown should succeed")
+
+				fm, _, err := splitFrontmatter(rendered)
+				require.NoError(t, err, "rendered output should itself be a valid SKILL.md")
+
+				assert.Equal(t, []string{"Bash"}, stringSliceValue(fm["disallowed-tools"]))
+
+				_, hasCamelKey := fm["disallowedTools"]
+				assert.False(t, hasCamelKey, "camelCase key must not survive into the rendered output")
+			},
+		},
+		{
+			name: "allowed-tools always renders as a single space-joined string, never a YAML list",
+			run: func(t *testing.T) {
+				t.Helper()
+
+				content := Content{
+					Description:   "d",
+					Body:          "Body.",
+					Frontmatter:   map[string]any{"allowedTools": []any{"Bash", "Read", "Write"}},
+					UserInvocable: true,
+				}
+
+				rendered, err := renderSkillMarkdown(content, "joined-tools-skill")
+				require.NoError(t, err, "renderSkillMarkdown should succeed")
+
+				assert.Contains(t, rendered, "allowed-tools: Bash Read Write\n", "allowed-tools must render as one line, not a multi-line YAML list")
+				assert.NotContains(t, rendered, "- Bash", "allowed-tools must not render as a YAML list")
+			},
+		},
+		{
+			name: "an inline body's allowed-tools written as the Agent Skills spec's space-/comma-separated string round-trips into its constituent entries",
+			run: func(t *testing.T) {
+				t.Helper()
+
+				content := Content{Body: "---\ndescription: d\nallowed-tools: Bash, Read  Write\n---\n\nBody."}
+
+				rendered, err := renderSkillMarkdown(content, "string-form-tools-skill")
+				require.NoError(t, err, "renderSkillMarkdown should succeed")
+
+				fm, _, err := splitFrontmatter(rendered)
+				require.NoError(t, err, "rendered output should itself be a valid SKILL.md")
+
+				assert.Equal(t, []string{"Bash", "Read", "Write"}, stringSliceValue(fm["allowed-tools"]), "the comma-/space-separated string must have been split into its constituent tool entries, not dropped")
+			},
+		},
+		{
+			name: "an explicit metadata mapping in content.Frontmatter round-trips to the written metadata field",
+			run: func(t *testing.T) {
+				t.Helper()
+
+				content := Content{
+					Description:   "d",
+					Body:          "Body.",
+					Frontmatter:   map[string]any{"metadata": map[string]any{"alwaysApply": false}},
+					UserInvocable: true,
+				}
+
+				rendered, err := renderSkillMarkdown(content, "structured-metadata-skill")
+				require.NoError(t, err, "renderSkillMarkdown should succeed")
+
+				fm, _, err := splitFrontmatter(rendered)
+				require.NoError(t, err, "rendered output should itself be a valid SKILL.md")
 
 				metadata := mapValue(fm["metadata"])
-				require.NotNil(t, metadata, "unrecognized key should have been folded into metadata")
-				assert.Equal(t, "bar", stringValue(metadata["foo"]))
+				require.NotNil(t, metadata, "an explicit metadata mapping from content.Frontmatter must not be dropped")
+				assert.Equal(t, false, metadata["alwaysApply"])
 			},
 		},
 		{
@@ -477,7 +561,7 @@ func TestRenderSkillMarkdown(t *testing.T) {
 			},
 		},
 		{
-			name: "an explicit metadata mapping wins over a folded unrecognized key on collision",
+			name: "an explicit metadata mapping round-trips independently of an unrecognized top-level key with the same name",
 			run: func(t *testing.T) {
 				t.Helper()
 
@@ -493,9 +577,11 @@ func TestRenderSkillMarkdown(t *testing.T) {
 				require.NoError(t, err, "rendered output should itself be a valid SKILL.md")
 
 				metadata := mapValue(fm["metadata"])
-				require.NotNil(t, metadata)
-				assert.Equal(t, "from-explicit-metadata", stringValue(metadata["foo"]), "explicit metadata should win the collision")
+				require.NotNil(t, metadata, "the explicit metadata mapping must round-trip to its own metadata field")
+				assert.Equal(t, "from-explicit-metadata", stringValue(metadata["foo"]))
 				assert.Equal(t, "baz", stringValue(metadata["bar"]))
+
+				assert.Equal(t, "from-unrecognized", stringValue(fm["foo"]), "the unrecognized top-level foo key must survive on its own, not be conflated with metadata.foo")
 			},
 		},
 		{
