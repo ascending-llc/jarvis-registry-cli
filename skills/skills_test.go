@@ -130,7 +130,7 @@ func TestSyncCommandRun(t *testing.T) {
 		require.Equal(t, fmt.Sprintf("Bearer %s", mockBearerToken), r.Header.Get("Authorization"), "should request list_skills with the mocked bearer token")
 
 		require.Equal(t, "0", r.URL.Query().Get("fileCount"), "should request list_skills with fileCount=0")
-		require.Equal(t, "true", r.URL.Query().Get("enables"), "should request list_skills with enables=true")
+		require.Equal(t, "true", r.URL.Query().Get("enabled"), "should request list_skills with enabled=true")
 
 		_, err := w.Write(listSkillsRespBody)
 		require.NoError(t, err, "should be able to return mock data to the list_skills request")

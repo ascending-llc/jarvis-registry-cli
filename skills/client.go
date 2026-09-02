@@ -87,7 +87,7 @@ func (c Client) newListSkillsRequest() (*http.Request, error) {
 
 	q := url.Values{}
 	q.Set("fileCount", "0")
-	q.Set("enables", "true")
+	q.Set("enabled", "true")
 
 	u.RawQuery = q.Encode()
 
