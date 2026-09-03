@@ -227,7 +227,7 @@ func renderSkillMarkdown(content Content, remoteName string) (string, error) {
 		delete(merged, k)
 	}
 
-	yamlBytes, err := yaml.Marshal(rendered)
+	yamlBytes, err := marshalFlowArrays(rendered)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal SKILL.md frontmatter for %s: %s", remoteName, err.Error())
 	}
@@ -235,13 +235,43 @@ func renderSkillMarkdown(content Content, remoteName string) (string, error) {
 	var leftoverBytes []byte
 
 	if len(merged) > 0 {
-		leftoverBytes, err = yaml.Marshal(merged)
+		leftoverBytes, err = marshalFlowArrays(merged)
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal leftover SKILL.md frontmatter fields for %s: %s", remoteName, err.Error())
 		}
 	}
 
 	return "---\n" + string(yamlBytes) + string(leftoverBytes) + "---\n\n" + strippedBody, nil
+}
+
+// marshalFlowArrays behaves like yaml.Marshal, except every YAML sequence
+// (array) anywhere in v's tree — top-level or nested inside a map — is
+// rendered in flow style ("[a, b]") rather than yaml.v3's default block
+// style ("- a\n- b"), matching how real Claude Code frontmatter writes its
+// own array-valued fields (e.g. allowed-tools's sibling disallowed-tools,
+// or a skill's arguments).
+func marshalFlowArrays(v any) ([]byte, error) {
+	var node yaml.Node
+
+	if err := node.Encode(v); err != nil {
+		return nil, err
+	}
+
+	flowStyleSequences(&node)
+
+	return yaml.Marshal(&node)
+}
+
+// flowStyleSequences recursively sets every yaml.SequenceNode in node's
+// tree to yaml.FlowStyle, leaving every other node kind's style untouched.
+func flowStyleSequences(node *yaml.Node) {
+	if node.Kind == yaml.SequenceNode {
+		node.Style = yaml.FlowStyle
+	}
+
+	for _, child := range node.Content {
+		flowStyleSequences(child)
+	}
 }
 
 // stringValue returns v as a string, or "" if v is nil or not a string.

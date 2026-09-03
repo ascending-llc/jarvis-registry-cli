@@ -141,6 +141,54 @@ func TestCanonicalizeFrontmatterKeys(t *testing.T) {
 	}
 }
 
+func TestMarshalFlowArrays(t *testing.T) {
+	cases := []struct {
+		in   any
+		name string
+		want string
+	}{
+		{
+			name: "a top-level array renders in flow style, not yaml.v3's default block style",
+			in:   map[string]any{"disallowed-tools": []any{"Bash", "Read"}},
+			want: "disallowed-tools: [Bash, Read]\n",
+		},
+		{
+			name: "an array nested inside a map also renders in flow style",
+			in:   map[string]any{"metadata": map[string]any{"tags": []any{"a", "b"}}},
+			want: "metadata:\n    tags: [a, b]\n",
+		},
+		{
+			name: "an empty array renders as an empty flow-style list, not an omitted or null key",
+			in:   map[string]any{"disallowed-tools": []any{}},
+			want: "disallowed-tools: []\n",
+		},
+		{
+			name: "a single-element array still renders in flow style",
+			in:   map[string]any{"arguments": []any{"subcommand"}},
+			want: "arguments: [subcommand]\n",
+		},
+		{
+			name: "non-array values are unaffected: nested maps stay in block style",
+			in:   map[string]any{"metadata": map[string]any{"a": "1", "b": "2"}},
+			want: "metadata:\n    a: \"1\"\n    b: \"2\"\n",
+		},
+		{
+			name: "a plain scalar is unaffected",
+			in:   map[string]any{"license": "MIT"},
+			want: "license: MIT\n",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := marshalFlowArrays(c.in)
+			require.NoError(t, err, "marshalFlowArrays should succeed")
+
+			assert.Equal(t, c.want, string(got))
+		})
+	}
+}
+
 func TestRenderSkillMarkdown(t *testing.T) {
 	cases := []struct {
 		run  func(t *testing.T)
@@ -399,6 +447,25 @@ func TestRenderSkillMarkdown(t *testing.T) {
 
 				_, hasCamelKey := fm["disallowedTools"]
 				assert.False(t, hasCamelKey, "camelCase key must not survive into the rendered output")
+			},
+		},
+		{
+			name: "an array-valued leftover frontmatter field renders on disk in flow style, not yaml.v3's default block style",
+			run: func(t *testing.T) {
+				t.Helper()
+
+				content := Content{
+					Description:   "d",
+					Body:          "Body.",
+					Frontmatter:   map[string]any{"disallowedTools": []any{"Bash", "Read"}},
+					UserInvocable: true,
+				}
+
+				rendered, err := renderSkillMarkdown(content, "flow-style-skill")
+				require.NoError(t, err, "renderSkillMarkdown should succeed")
+
+				assert.Contains(t, rendered, "disallowed-tools: [Bash, Read]\n", "the array must render in flow style, on a single line")
+				assert.NotContains(t, rendered, "- Bash", "the array must not render in yaml.v3's default block/dash-list style")
 			},
 		},
 		{

@@ -36,6 +36,10 @@ type (
 	}
 )
 
+// RegistryDirName is the name of the per-user directory, under the user's
+// home directory, that holds the CLI's config file and sync manifest.
+const RegistryDirName = ".jarvis-registry"
+
 // homeTokenPattern matches literal $HOME / $USERPROFILE references, in either
 // "$NAME", "${NAME}", or Windows "%NAME%" form. Matching is intentionally not
 // tied to runtime.GOOS: a config file should resolve the same way regardless

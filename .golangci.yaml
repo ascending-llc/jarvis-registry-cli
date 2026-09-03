@@ -160,6 +160,11 @@ linters:
           - gosec
         # only marshaled to seed the mocked keyring for test setup; never logged or written to disk
         text: 'G117: Marshaled struct field "AccessToken" \(JSON key "access_token"\) matches secret pattern'
+      - path: '^auth/(login|status)_test\.go$'
+        linters:
+          - gosec
+        # fixture token values used only to assert round-tripping through the mocked keyring and test HTTP server, not real credentials
+        text: 'G101: Potential hardcoded credentials'
 
 issues:
   max-issues-per-linter: 0      
