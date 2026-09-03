@@ -22,6 +22,10 @@ import (
 const (
 	testService = "test-service"
 	testUser    = "test-user"
+
+	// testScope is the fixed scope string the mocked token endpoint reports
+	// on every successful device-flow and refresh-flow response.
+	testScope = "skills-read"
 )
 
 func TestNewRegistryTokenResolver(t *testing.T) {
@@ -114,8 +118,8 @@ func TestGetAccessToken(t *testing.T) {
 		assertStoredAccessToken(t, r.creds, "new-access-token")
 	})
 
-	t.Run("expired token with failed refresh falls back to device flow", func(t *testing.T) {
-		ts := newAuthServer(t, deviceCodeHandler(t), refreshHandler(t, func(w http.ResponseWriter, r *http.Request) {
+	t.Run("expired token with failed refresh returns ErrNotAuthenticated without falling back to device flow", func(t *testing.T) {
+		ts := newAuthServer(t, failIfCalled(t, "device code"), refreshHandler(t, func(w http.ResponseWriter, r *http.Request) {
 			writeJSONErrorResponse(t, w, http.StatusBadRequest, "invalid_grant", "refresh token expired")
 		}))
 		defer ts.Close()
@@ -129,27 +133,25 @@ func TestGetAccessToken(t *testing.T) {
 		})
 
 		token, err := r.GetAccessToken()
-		require.NoError(t, err, "GetAccessToken should fall back to the device flow when refresh fails")
+		require.ErrorIs(t, err, ErrNotAuthenticated, "GetAccessToken should return ErrNotAuthenticated when refresh fails, without running the device flow")
 
-		assert.Equal(t, "device-access-token", token, "GetAccessToken should return the token obtained from the device flow")
-
-		assertStoredAccessToken(t, r.creds, "device-access-token")
+		assert.Empty(t, token, "GetAccessToken should return an empty token on failure")
 	})
 
-	t.Run("no stored credentials goes straight to device flow", func(t *testing.T) {
-		ts := newAuthServer(t, deviceCodeHandler(t), refreshHandler(t, failIfCalled(t, "refresh")))
+	t.Run("no stored credentials returns ErrNotAuthenticated without running the device flow", func(t *testing.T) {
+		ts := newAuthServer(t, failIfCalled(t, "device code"), refreshHandler(t, failIfCalled(t, "refresh")))
 		defer ts.Close()
 
 		r := newTestResolver(t, ts)
 
 		token, err := r.GetAccessToken()
-		require.NoError(t, err, "GetAccessToken should succeed via the device flow when no credentials are stored")
+		require.ErrorIs(t, err, ErrNotAuthenticated, "GetAccessToken should return ErrNotAuthenticated when no credentials are stored")
 
-		assert.Equal(t, "device-access-token", token, "GetAccessToken should return the token obtained from the device flow")
+		assert.Empty(t, token, "GetAccessToken should return an empty token on failure")
 	})
 
-	t.Run("corrupt stored credentials falls back to device flow", func(t *testing.T) {
-		ts := newAuthServer(t, deviceCodeHandler(t), refreshHandler(t, failIfCalled(t, "refresh")))
+	t.Run("corrupt stored credentials returns ErrNotAuthenticated without running the device flow", func(t *testing.T) {
+		ts := newAuthServer(t, failIfCalled(t, "device code"), refreshHandler(t, failIfCalled(t, "refresh")))
 		defer ts.Close()
 
 		r := newTestResolver(t, ts)
@@ -157,9 +159,9 @@ func TestGetAccessToken(t *testing.T) {
 		require.NoError(t, r.creds.Write([]byte("not-valid-json")), "should be able to seed the mocked keyring with unparsable content")
 
 		token, err := r.GetAccessToken()
-		require.NoError(t, err, "GetAccessToken should succeed via the device flow when stored credentials cannot be unmarshaled")
+		require.ErrorIs(t, err, ErrNotAuthenticated, "GetAccessToken should return ErrNotAuthenticated when stored credentials cannot be unmarshaled")
 
-		assert.Equal(t, "device-access-token", token, "GetAccessToken should return the token obtained from the device flow")
+		assert.Empty(t, token, "GetAccessToken should return an empty token on failure")
 	})
 
 	t.Run("keyring read failure other than not-exist returns immediately without any network call", func(t *testing.T) {
@@ -174,6 +176,207 @@ func TestGetAccessToken(t *testing.T) {
 		require.Error(t, err, "GetAccessToken should surface a keyring read failure that is not ErrCredentialsNotExist")
 
 		assert.Empty(t, token, "GetAccessToken should return an empty token on failure")
+	})
+}
+
+func TestLogin(t *testing.T) {
+	t.Run("valid cached token is a no-op: no network call, no keyring write", func(t *testing.T) {
+		ts := newAuthServer(t, failIfCalled(t, "device code"), failIfCalled(t, "refresh"))
+		defer ts.Close()
+
+		r := newTestResolver(t, ts)
+
+		seeded := StoredTokens{
+			LastUpdate:   time.Now().UTC(),
+			AccessToken:  "cached-access-token",
+			RefreshToken: "cached-refresh-token",
+			Scope:        testScope,
+		}
+
+		seedStoredTokens(t, r.creds, seeded)
+
+		st, err := r.Login()
+		require.NoError(t, err, "Login should succeed when a non-expired token is already stored")
+
+		assert.Equal(t, seeded, st, "Login should return the cached tokens unchanged")
+		assert.Equal(t, seeded, readStoredTokens(t, r.creds), "Login should not have rewritten the stored credentials")
+	})
+
+	t.Run("expired token with working refresh is refreshed and re-cached without running the device flow", func(t *testing.T) {
+		ts := newAuthServer(t, failIfCalled(t, "device code"), refreshHandler(t, func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "old-refresh-token", r.FormValue("refresh_token"), "refresh request should carry the stored refresh token")
+
+			writeJSONTokenResponse(t, w, http.StatusOK, "new-access-token", "new-refresh-token")
+		}))
+		defer ts.Close()
+
+		r := newTestResolver(t, ts)
+
+		seedStoredTokens(t, r.creds, StoredTokens{
+			LastUpdate:   time.Now().UTC().Add(-2 * time.Hour),
+			AccessToken:  "old-access-token",
+			RefreshToken: "old-refresh-token",
+		})
+
+		st, err := r.Login()
+		require.NoError(t, err, "Login should succeed when the refresh flow succeeds")
+
+		assert.Equal(t, "new-access-token", st.AccessToken, "Login should return the refreshed access token")
+		assert.Equal(t, testScope, st.Scope, "Login should return the scope reported by the refresh flow")
+
+		assertStoredAccessToken(t, r.creds, "new-access-token")
+	})
+
+	t.Run("expired token with failed refresh falls back to the device flow", func(t *testing.T) {
+		ts := newAuthServer(t, deviceCodeHandler(t), refreshHandler(t, func(w http.ResponseWriter, r *http.Request) {
+			writeJSONErrorResponse(t, w, http.StatusBadRequest, "invalid_grant", "refresh token expired")
+		}))
+		defer ts.Close()
+
+		r := newTestResolver(t, ts)
+
+		seedStoredTokens(t, r.creds, StoredTokens{
+			LastUpdate:   time.Now().UTC().Add(-2 * time.Hour),
+			AccessToken:  "old-access-token",
+			RefreshToken: "old-refresh-token",
+		})
+
+		st, err := r.Login()
+		require.NoError(t, err, "Login should fall back to the device flow when refresh fails")
+
+		assert.Equal(t, "device-access-token", st.AccessToken, "Login should return the token obtained from the device flow")
+		assert.Equal(t, testScope, st.Scope, "Login should return the scope reported by the device flow")
+
+		assertStoredAccessToken(t, r.creds, "device-access-token")
+	})
+
+	t.Run("no stored credentials runs the device flow and caches the resulting tokens and scope", func(t *testing.T) {
+		ts := newAuthServer(t, deviceCodeHandler(t), refreshHandler(t, failIfCalled(t, "refresh")))
+		defer ts.Close()
+
+		r := newTestResolver(t, ts)
+
+		st, err := r.Login()
+		require.NoError(t, err, "Login should succeed via the device flow when no credentials are stored")
+
+		assert.Equal(t, "device-access-token", st.AccessToken, "Login should return the token obtained from the device flow")
+
+		stored := readStoredTokens(t, r.creds)
+		assert.Equal(t, "device-access-token", stored.AccessToken, "the device flow's access token should be cached in the keyring")
+		assert.Equal(t, "device-refresh-token", stored.RefreshToken, "the device flow's refresh token should be cached in the keyring")
+		assert.Equal(t, testScope, stored.Scope, "the device flow's granted scope should be cached in the keyring")
+	})
+
+	t.Run("keyring read failure other than not-exist surfaces immediately without running the device flow", func(t *testing.T) {
+		ts := newAuthServer(t, failIfCalled(t, "device code"), failIfCalled(t, "refresh"))
+		defer ts.Close()
+
+		r := newTestResolver(t, ts)
+
+		keyring.MockInitWithError(errors.New("keyring backend unavailable"))
+
+		st, err := r.Login()
+		require.Error(t, err, "Login should surface a keyring read failure that is not ErrCredentialsNotExist")
+		require.NotErrorIs(t, err, ErrNotAuthenticated, "an unrelated keyring failure should not be reported as ErrNotAuthenticated")
+
+		assert.Empty(t, st, "Login should return zero-value StoredTokens on failure")
+	})
+}
+
+func TestStatus(t *testing.T) {
+	t.Run("valid cached token reports logged in without any network call", func(t *testing.T) {
+		ts := newAuthServer(t, failIfCalled(t, "device code"), failIfCalled(t, "refresh"))
+		defer ts.Close()
+
+		r := newTestResolver(t, ts)
+
+		seeded := StoredTokens{
+			LastUpdate:   time.Now().UTC(),
+			AccessToken:  "cached-access-token",
+			RefreshToken: "cached-refresh-token",
+			Scope:        testScope,
+		}
+
+		seedStoredTokens(t, r.creds, seeded)
+
+		st, loggedIn, err := r.Status()
+		require.NoError(t, err, "Status should not error for a non-expired cached token")
+
+		assert.True(t, loggedIn, "Status should report loggedIn=true for a non-expired cached token")
+		assert.Equal(t, seeded, st, "Status should return the cached tokens unchanged")
+	})
+
+	t.Run("expired token with working refresh refreshes, re-caches, and reports logged in", func(t *testing.T) {
+		ts := newAuthServer(t, failIfCalled(t, "device code"), refreshHandler(t, func(w http.ResponseWriter, r *http.Request) {
+			writeJSONTokenResponse(t, w, http.StatusOK, "new-access-token", "new-refresh-token")
+		}))
+		defer ts.Close()
+
+		r := newTestResolver(t, ts)
+
+		seedStoredTokens(t, r.creds, StoredTokens{
+			LastUpdate:   time.Now().UTC().Add(-2 * time.Hour),
+			AccessToken:  "old-access-token",
+			RefreshToken: "old-refresh-token",
+		})
+
+		st, loggedIn, err := r.Status()
+		require.NoError(t, err, "Status should not error when the refresh flow succeeds")
+
+		assert.True(t, loggedIn, "Status should report loggedIn=true after a successful refresh")
+		assert.Equal(t, "new-access-token", st.AccessToken, "Status should return the refreshed access token")
+
+		assertStoredAccessToken(t, r.creds, "new-access-token")
+	})
+
+	t.Run("no stored credentials reports not logged in without error and without running the device flow", func(t *testing.T) {
+		ts := newAuthServer(t, failIfCalled(t, "device code"), refreshHandler(t, failIfCalled(t, "refresh")))
+		defer ts.Close()
+
+		r := newTestResolver(t, ts)
+
+		st, loggedIn, err := r.Status()
+		require.NoError(t, err, "Status should treat a cache miss as loggedIn=false, not an error")
+
+		assert.False(t, loggedIn, "Status should report loggedIn=false when no credentials are stored")
+		assert.Empty(t, st, "Status should return zero-value StoredTokens when not logged in")
+	})
+
+	t.Run("expired token with failed refresh reports not logged in without error and without running the device flow", func(t *testing.T) {
+		ts := newAuthServer(t, failIfCalled(t, "device code"), refreshHandler(t, func(w http.ResponseWriter, r *http.Request) {
+			writeJSONErrorResponse(t, w, http.StatusBadRequest, "invalid_grant", "refresh token expired")
+		}))
+		defer ts.Close()
+
+		r := newTestResolver(t, ts)
+
+		seedStoredTokens(t, r.creds, StoredTokens{
+			LastUpdate:   time.Now().UTC().Add(-2 * time.Hour),
+			AccessToken:  "old-access-token",
+			RefreshToken: "old-refresh-token",
+		})
+
+		st, loggedIn, err := r.Status()
+		require.NoError(t, err, "Status should treat a failed refresh as loggedIn=false, not an error")
+
+		assert.False(t, loggedIn, "Status should report loggedIn=false when refresh fails")
+		assert.Empty(t, st, "Status should return zero-value StoredTokens when not logged in")
+	})
+
+	t.Run("keyring read failure other than not-exist surfaces as a real error", func(t *testing.T) {
+		ts := newAuthServer(t, failIfCalled(t, "device code"), failIfCalled(t, "refresh"))
+		defer ts.Close()
+
+		r := newTestResolver(t, ts)
+
+		keyring.MockInitWithError(errors.New("keyring backend unavailable"))
+
+		st, loggedIn, err := r.Status()
+		require.Error(t, err, "Status should surface a keyring read failure that is not ErrCredentialsNotExist")
+		require.NotErrorIs(t, err, ErrNotAuthenticated, "an unrelated keyring failure should not be reported as loggedIn=false")
+
+		assert.False(t, loggedIn, "Status should report loggedIn=false alongside the error")
+		assert.Empty(t, st, "Status should return zero-value StoredTokens on failure")
 	})
 }
 
@@ -262,6 +465,7 @@ func writeJSONTokenResponse(t *testing.T, w http.ResponseWriter, status int, acc
 		"access_token":  accessToken,
 		"refresh_token": refreshToken,
 		"token_type":    "bearer",
+		"scope":         testScope,
 	})
 	require.NoError(t, err, "should be able to marshal the mocked token response")
 
@@ -300,6 +504,14 @@ func seedStoredTokens(t *testing.T, rw creds.KeyringReadWriter, st StoredTokens)
 func assertStoredAccessToken(t *testing.T, rw creds.KeyringReadWriter, wantAccessToken string) {
 	t.Helper()
 
+	st := readStoredTokens(t, rw)
+
+	assert.Equal(t, wantAccessToken, st.AccessToken, "the persisted access token should match the one returned by GetAccessToken")
+}
+
+func readStoredTokens(t *testing.T, rw creds.KeyringReadWriter) StoredTokens {
+	t.Helper()
+
 	content, err := rw.Read()
 	require.NoError(t, err, "should be able to read back the stored credentials")
 
@@ -307,5 +519,5 @@ func assertStoredAccessToken(t *testing.T, rw creds.KeyringReadWriter, wantAcces
 
 	require.NoError(t, json.Unmarshal(content, &st), "should be able to unmarshal the stored credentials")
 
-	assert.Equal(t, wantAccessToken, st.AccessToken, "the persisted access token should match the one returned by GetAccessToken")
+	return st
 }

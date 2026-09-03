@@ -43,10 +43,15 @@ type (
 		LastUpdate   time.Time `json:"last_update,omitzero"`
 		AccessToken  string    `json:"access_token"`
 		RefreshToken string    `json:"refresh_token"`
+		Scope        string    `json:"scope"`
 	}
 )
 
 const (
+	// ScopeSkillsRead grants read access to skills.SyncCommand's
+	// sync-skills operations.
+	ScopeSkillsRead = "skills-read"
+
 	// jarvisRegistryService is the Keychain "service" namespace prefix for
 	// this CLI's cached credentials. NewRegistryTokenResolver combines it
 	// with the target Registry's baseUrl so tokens for different Registry
@@ -64,6 +69,22 @@ const (
 	clientId = "jarvis-registry-cli"
 
 	expiration = time.Minute * 59
+)
+
+var (
+	// ErrNotAuthenticated indicates no valid Registry credentials are
+	// cached in the OS keyring and none could be obtained without user
+	// interaction. GetAccessToken and Status return it instead of running
+	// the OAuth device flow; only Login runs the device flow, via its own
+	// fallback.
+	ErrNotAuthenticated = errors.New("not logged in to the Registry: run `jarvis-registry auth login` to authenticate")
+
+	// RegistryScopes is the full set of OAuth scopes this CLI ever
+	// requests from the Registry auth server, across every command. The
+	// device flow — the only place scope is actually negotiated — must
+	// request this whole set, since a refreshed token cannot renegotiate
+	// scope.
+	RegistryScopes = []string{ScopeSkillsRead}
 )
 
 // NewRegistryTokenResolver builds a RegistryTokenResolver against the
@@ -97,56 +118,86 @@ func NewRegistryTokenResolver(authServerBaseUrl string, scopes []string, logger 
 	return r
 }
 
-// GetAccessToken returns a valid Registry access token. It prefers a
-// cached, unexpired token; failing that, it refreshes a cached token via
-// the OAuth refresh flow; and as a last resort, it performs a full OAuth
-// device flow. Successfully obtained tokens are cached in the OS keyring
-// for reuse.
-func (r RegistryTokenResolver) GetAccessToken() (string, error) {
+// resolveCached returns the cached tokens, refreshing them via the OAuth
+// refresh grant if the access token has expired. It never performs the
+// OAuth device flow: a caller gets ErrNotAuthenticated when no credentials
+// are cached, cached credentials are corrupt, or the refresh flow fails.
+func (r RegistryTokenResolver) resolveCached() (StoredTokens, error) {
 	var st StoredTokens
 
-	var shouldDeviceFlow = false
-
 	content, err := r.creds.Read()
-	if err != nil && !errors.Is(err, creds.ErrCredentialsNotExist) {
-		// Credentials exist in OS keyring but cannot be read.
+	if err != nil {
+		if errors.Is(err, creds.ErrCredentialsNotExist) {
+			return StoredTokens{}, ErrNotAuthenticated
+		}
+
+		return StoredTokens{}, err
+	}
+
+	if err = json.Unmarshal(content, &st); err != nil {
+		return StoredTokens{}, ErrNotAuthenticated
+	}
+
+	if st.LastUpdate.Add(expiration).After(time.Now().UTC()) {
+		return st, nil
+	}
+
+	if err = r.refreshFlow(st.RefreshToken, &st); err != nil {
+		return StoredTokens{}, ErrNotAuthenticated
+	}
+
+	return st, nil
+}
+
+// GetAccessToken returns a valid Registry access token from the OS
+// keyring, refreshing it first if it has expired. It never performs the
+// OAuth device flow — callers that hit ErrNotAuthenticated should tell the
+// user to run "jarvis-registry auth login".
+func (r RegistryTokenResolver) GetAccessToken() (string, error) {
+	st, err := r.resolveCached()
+	if err != nil {
 		return "", err
 	}
 
-	if errors.Is(err, creds.ErrCredentialsNotExist) {
-		// Credentials does not exist at all. Perform device flow.
-		shouldDeviceFlow = true
+	return st.AccessToken, nil
+}
+
+// Login ensures a valid Registry access token is cached: it leaves an
+// already-valid cached token untouched, refreshes an expired one, and
+// falls back to the OAuth device flow when no credentials are cached or
+// the refresh flow fails. It backs the "auth login" command.
+func (r RegistryTokenResolver) Login() (StoredTokens, error) {
+	st, err := r.resolveCached()
+	if err == nil {
+		return st, nil
 	}
 
-	// Stored credentials are successfully retrieved from OS keyring.
-	if !shouldDeviceFlow {
-		if err = json.Unmarshal(content, &st); err != nil {
-			r.logger.Printf("failed to unmarshal stored credentials: %s\n", err.Error())
-
-			shouldDeviceFlow = true
-		}
+	if !errors.Is(err, ErrNotAuthenticated) {
+		return StoredTokens{}, err
 	}
 
-	// Successfully unmarshaled stored credentials
-	if !shouldDeviceFlow && err == nil {
-		if st.LastUpdate.Add(expiration).After(time.Now().UTC()) {
-			// Access token is still valid.
-			return st.AccessToken, nil
-		}
-
-		// Access token has expired. Perform refresh flow.
-		if err = r.refreshFlow(st.RefreshToken, &st); err == nil {
-			return st.AccessToken, nil
-		}
-
-		// Refresh flow failed. Need device flow next.
+	if err = r.deviceFlow(&st); err != nil {
+		return StoredTokens{}, err
 	}
 
-	if err = r.deviceFlow(&st); err == nil {
-		return st.AccessToken, nil
+	return st, nil
+}
+
+// Status reports whether a valid Registry access token is currently
+// cached, refreshing an expired one if possible. Unlike GetAccessToken, a
+// cache miss is not an error: loggedIn is simply false. It never performs
+// the OAuth device flow. It backs the "auth status" command.
+func (r RegistryTokenResolver) Status() (st StoredTokens, loggedIn bool, err error) {
+	st, err = r.resolveCached()
+	if err == nil {
+		return st, true, nil
 	}
 
-	return "", err
+	if errors.Is(err, ErrNotAuthenticated) {
+		return StoredTokens{}, false, nil
+	}
+
+	return StoredTokens{}, false, err
 }
 
 // deviceFlow runs the OAuth device grant, populating st with the
@@ -161,6 +212,7 @@ func (r RegistryTokenResolver) deviceFlow(st *StoredTokens) error {
 
 	st.AccessToken = resp.Token
 	st.RefreshToken = resp.RefreshToken
+	st.Scope = resp.Scope
 	st.LastUpdate = time.Now().UTC()
 
 	content, err := json.Marshal(st)
@@ -200,6 +252,7 @@ func (r RegistryTokenResolver) refreshFlow(refreshToken string, st *StoredTokens
 
 	st.AccessToken = tokens.Token
 	st.RefreshToken = tokens.RefreshToken
+	st.Scope = tokens.Scope
 	st.LastUpdate = time.Now().UTC()
 
 	content, err := json.Marshal(&st)

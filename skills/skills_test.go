@@ -256,7 +256,7 @@ func newTestSyncSetup(t *testing.T, ts *httptest.Server) (cmd SyncCommand, mockS
 	err = cmd.AfterApply()
 	require.NoError(t, err, "should be able to call SyncCommand.AfterApply without error")
 
-	registryDir = filepath.Join(mockHomeDir, registryDirName)
+	registryDir = filepath.Join(mockHomeDir, cfg.RegistryDirName)
 
 	err = os.MkdirAll(registryDir, 0755)
 	require.NoError(t, err, "should be able to create the mocked registry directory")

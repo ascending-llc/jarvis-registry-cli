@@ -65,11 +65,7 @@ type (
 )
 
 const (
-	skillsReadScope = "skills-read"
-
 	registryBasePath = "/gateway"
-
-	registryDirName = ".jarvis-registry"
 
 	concurrency = 5
 
@@ -98,7 +94,7 @@ func (c *SyncCommand) BeforeReset() (err error) {
 // config: the registry directory, destination folder, Registry and
 // auth-server base URLs, and token provider.
 func (c *SyncCommand) AfterApply() (err error) {
-	c.registryDir = filepath.Join(c.userHomeDir, registryDirName)
+	c.registryDir = filepath.Join(c.userHomeDir, cfg.RegistryDirName)
 
 	config, err := c.configLoadFunc(c.registryDir)
 	if err != nil {
@@ -111,7 +107,7 @@ func (c *SyncCommand) AfterApply() (err error) {
 
 	c.authBaseUrl = config.Registry.AuthBaseUrl
 
-	c.tp = auth.NewRegistryTokenResolver(c.authBaseUrl, []string{skillsReadScope}, c.logger)
+	c.tp = auth.NewRegistryTokenResolver(c.authBaseUrl, auth.RegistryScopes, c.logger)
 
 	return nil
 }
