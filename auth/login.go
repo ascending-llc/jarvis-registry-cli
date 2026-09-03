@@ -29,7 +29,7 @@ func (c *LoginCommand) BeforeReset() (err error) {
 	}
 
 	c.configLoadFunc = cfg.Load
-	c.logger = log.New(os.Stdout, "jarvis-registry", 0)
+	c.logger = log.New(os.Stdout, "", 0)
 
 	return nil
 }

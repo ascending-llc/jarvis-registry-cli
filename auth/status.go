@@ -33,7 +33,7 @@ func (c *StatusCommand) BeforeReset() (err error) {
 	}
 
 	c.configLoadFunc = cfg.Load
-	c.logger = log.New(os.Stdout, "jarvis-registry", 0)
+	c.logger = log.New(os.Stdout, "", 0)
 	c.exitFunc = os.Exit
 
 	return nil

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -50,6 +51,17 @@ func TestIsSafeSkillName(t *testing.T) {
 			assert.Equal(t, c.safe, isSafeSkillName(c.name), "isSafeSkillName(%q) mismatch", c.name)
 		})
 	}
+}
+
+func TestSyncCommandBeforeReset(t *testing.T) {
+	cmd := SyncCommand{}
+
+	err := cmd.BeforeReset()
+	require.NoError(t, err, "should be able to call SyncCommand.BeforeReset without error")
+
+	logger, ok := cmd.logger.(*log.Logger)
+	require.True(t, ok, "logger should be a *log.Logger")
+	assert.Empty(t, logger.Prefix(), "logger should not have a prefix, so its output isn't run together with unprefixed messages")
 }
 
 func TestSyncCommandAfterApply(t *testing.T) {
