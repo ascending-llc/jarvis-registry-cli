@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -520,4 +521,27 @@ func readStoredTokens(t *testing.T, rw creds.KeyringReadWriter) StoredTokens {
 	require.NoError(t, json.Unmarshal(content, &st), "should be able to unmarshal the stored credentials")
 
 	return st
+}
+
+// mockUserHomeDir points os.UserHomeDir at a fresh temp directory for the
+// duration of the test, so LoginCommand/StatusCommand's BeforeReset resolves
+// a throwaway home directory instead of the real one. It restores the
+// original HOME/USERPROFILE values on cleanup.
+func mockUserHomeDir(t *testing.T) string {
+	t.Helper()
+
+	mockHomeDir := t.TempDir()
+
+	originalHome := os.Getenv("HOME")
+	originalUserProfile := os.Getenv("USERPROFILE")
+
+	require.NoError(t, os.Setenv("HOME", mockHomeDir), "should be able to set HOME env var so os.UserHomeDir returns the mocked home directory")
+	require.NoError(t, os.Setenv("USERPROFILE", mockHomeDir), "should be able to set USERPROFILE env var so os.UserHomeDir returns the mocked home directory on Windows")
+
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", originalHome)
+		_ = os.Setenv("USERPROFILE", originalUserProfile)
+	})
+
+	return mockHomeDir
 }

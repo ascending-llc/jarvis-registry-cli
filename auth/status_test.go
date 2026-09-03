@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
@@ -188,18 +187,7 @@ func TestFormatScopes(t *testing.T) {
 func newTestStatusCommand(t *testing.T, baseUrl, authBaseUrl string) (cmd *StatusCommand, out *bytes.Buffer) {
 	t.Helper()
 
-	mockHomeDir := t.TempDir()
-
-	originalHome := os.Getenv("HOME")
-	originalUserProfile := os.Getenv("USERPROFILE")
-
-	require.NoError(t, os.Setenv("HOME", mockHomeDir), "should be able to set HOME env var so os.UserHomeDir returns the mocked home directory")
-	require.NoError(t, os.Setenv("USERPROFILE", mockHomeDir), "should be able to set USERPROFILE env var so os.UserHomeDir returns the mocked home directory on Windows")
-
-	t.Cleanup(func() {
-		_ = os.Setenv("HOME", originalHome)
-		_ = os.Setenv("USERPROFILE", originalUserProfile)
-	})
+	mockUserHomeDir(t)
 
 	cmd = &StatusCommand{}
 

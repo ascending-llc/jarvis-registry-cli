@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
@@ -143,18 +142,7 @@ func newRealPathAuthServer(t *testing.T, deviceHandler, tokenHandler http.Handle
 func newTestLoginCommand(t *testing.T, authBaseUrl string) *LoginCommand {
 	t.Helper()
 
-	mockHomeDir := t.TempDir()
-
-	originalHome := os.Getenv("HOME")
-	originalUserProfile := os.Getenv("USERPROFILE")
-
-	require.NoError(t, os.Setenv("HOME", mockHomeDir), "should be able to set HOME env var so os.UserHomeDir returns the mocked home directory")
-	require.NoError(t, os.Setenv("USERPROFILE", mockHomeDir), "should be able to set USERPROFILE env var so os.UserHomeDir returns the mocked home directory on Windows")
-
-	t.Cleanup(func() {
-		_ = os.Setenv("HOME", originalHome)
-		_ = os.Setenv("USERPROFILE", originalUserProfile)
-	})
+	mockUserHomeDir(t)
 
 	cmd := &LoginCommand{}
 
