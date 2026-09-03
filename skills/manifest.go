@@ -64,7 +64,13 @@ func (mrw ManifestReadWriter) ReadSkills() ([]Metadata, error) {
 }
 
 // WriteManifest overwrites the manifest file with skills, marking the
-// file read-only afterward.
+// file read-only afterward. It writes to a temp file in the same
+// directory first and renames it into place: os.Rename is a single,
+// same-filesystem, atomic syscall, so a crash mid-write can never leave
+// a truncated or partially-written manifest at mrw.path. Renaming onto
+// an existing target does not require that target to be writable on
+// POSIX, since rename relinks a directory entry rather than opening the
+// target for writing.
 func (mrw ManifestReadWriter) WriteManifest(skills []Metadata) error {
 	m := ManifestV1{
 		SchemaVersion: manifestSchemaVersion,
@@ -77,16 +83,36 @@ func (mrw ManifestReadWriter) WriteManifest(skills []Metadata) error {
 		return fmt.Errorf("failed to marshal manifest file contents: %s", err.Error())
 	}
 
-	if err = os.Chmod(mrw.path, 0644); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("failed to toggle manifest file %s writable: %s", mrw.path, err.Error())
+	tempFile, err := os.CreateTemp(filepath.Dir(mrw.path), ".skill-lock-*.json.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file for manifest write: %s", err.Error())
 	}
 
-	if err = os.WriteFile(mrw.path, content, 0444); err != nil {
-		return fmt.Errorf("failed to write manifest file at %s: %s", mrw.path, err.Error())
+	tempPath := tempFile.Name()
+
+	if _, err = tempFile.Write(content); err != nil {
+		_ = tempFile.Close()
+		_ = os.Remove(tempPath)
+
+		return fmt.Errorf("failed to write temp manifest file at %s: %s", tempPath, err.Error())
 	}
 
-	if err = os.Chmod(mrw.path, 0444); err != nil {
-		return fmt.Errorf("failed to toggle manifest file %s read-only: %s", mrw.path, err.Error())
+	if err = tempFile.Close(); err != nil {
+		_ = os.Remove(tempPath)
+
+		return fmt.Errorf("failed to close temp manifest file at %s: %s", tempPath, err.Error())
+	}
+
+	if err = os.Chmod(tempPath, 0444); err != nil {
+		_ = os.Remove(tempPath)
+
+		return fmt.Errorf("failed to toggle temp manifest file %s read-only: %s", tempPath, err.Error())
+	}
+
+	if err = os.Rename(tempPath, mrw.path); err != nil {
+		_ = os.Remove(tempPath)
+
+		return fmt.Errorf("failed to move temp manifest file into place at %s: %s", mrw.path, err.Error())
 	}
 
 	return nil

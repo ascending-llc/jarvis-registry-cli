@@ -165,6 +165,21 @@ linters:
           - gosec
         # fixture token values used only to assert round-tripping through the mocked keyring and test HTTP server, not real credentials
         text: 'G101: Potential hardcoded credentials'
+      - path: '^skills/manifest_test\.go$'
+        linters:
+          - gosec
+        # paths are built from a t.TempDir() plus package constants, not from untrusted input
+        text: 'G304: Potential file inclusion via variable'
+      - path: '^skills/manifest_test\.go$'
+        linters:
+          - gosec
+        # chmod'd on a t.TempDir() to simulate a permission-denied write failure, not a real deployment path
+        text: 'G302: Expect file permissions to be 0600 or less'
+      - path: '^skills/manifest_test\.go$'
+        linters:
+          - gosec
+        # a directory pre-created at the manifest path, inside a t.TempDir(), to force WriteManifest's rename step to fail; not a real deployment path
+        text: 'G301: Expect directory permissions to be 0750 or less'
 
 issues:
   max-issues-per-linter: 0      
