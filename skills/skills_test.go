@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -177,20 +179,389 @@ func TestSyncCommandRun(t *testing.T) {
 		err = os.CopyFS(mockSkillsDir, os.DirFS(filepath.Join("testdata", "initial-state")))
 		require.NoError(t, err, "should be able to copy the initial-state fixture directory tree to the mocked skills directory")
 
+		var buf bytes.Buffer
+
+		cmd.logger = log.New(&buf, "", 0)
+
 		err = cmd.Run()
 		assertPartialFailure(t, err)
 
 		assertSyncResult(t, mockSkillsDir, registryDir)
+
+		assert.NotContains(t, buf.String(), "First time skill sync", "no banner should print when destDir already existed")
+
+		rows := parseMarkdownSummaryRows(t, buf.String())
+
+		assertSummaryRow(t, rows, "to-create-skill-7", statusCreated, "-", "7", "")
+		assertSummaryRow(t, rows, "not-in-remote-and-name-collide-skill-3", statusCreated, "-", "6", "")
+		assertSummaryRow(t, rows, "swap-skill-alpha", statusUpdated, "1", "2", "renamed from swap-skill-beta")
+		assertSummaryRow(t, rows, "swap-skill-beta", statusUpdated, "1", "2", "renamed from swap-skill-alpha")
+		assertSummaryRow(t, rows, "to-update-skill-4", statusUpdated, "3", "4", "")
+		assertSummaryRow(t, rows, "accidentally-deleted-skill-5", statusUpdated, "5", "5", "renamed from accidentally-delete-skill-5")
+		assertSummaryRow(t, rows, "no-update-skill-1", statusUnchanged, "1", "1", "")
+		assertSummaryRow(t, rows, "not-in-remote-skill-2", statusRemoved, "2", "-", "")
+		assertSummaryRow(t, rows, "not-in-remote-and-name-collide-skill-3", statusRemoved, "3", "-", "")
+
+		failedRow := findSummaryRow(t, rows, "malformed-skill-10", statusFailed)
+		assert.Equal(t, "-", failedRow[2], "a failed create's Previous Version should be '-'")
+		assert.Equal(t, "-", failedRow[3], "a failed create's Current Version should be '-'")
+		assert.Contains(t, failedRow[4], "resolved description is empty", "the Failed row's Notes should carry the underlying error message")
+
+		// rows must be grouped by Status in the fixed order Created,
+		// Updated, Unchanged, Removed, Failed, and sorted alphabetically by
+		// Skill within each group.
+		wantOrder := [][2]string{
+			{"not-in-remote-and-name-collide-skill-3", statusCreated},
+			{"to-create-skill-7", statusCreated},
+			{"accidentally-deleted-skill-5", statusUpdated},
+			{"swap-skill-alpha", statusUpdated},
+			{"swap-skill-beta", statusUpdated},
+			{"to-update-skill-4", statusUpdated},
+			{"no-update-skill-1", statusUnchanged},
+			{"not-in-remote-and-name-collide-skill-3", statusRemoved},
+			{"not-in-remote-skill-2", statusRemoved},
+			{"malformed-skill-10", statusFailed},
+		}
+
+		var gotOrder [][2]string
+
+		for _, row := range rows {
+			gotOrder = append(gotOrder, [2]string{row[0], row[1]})
+		}
+
+		assert.Equal(t, wantOrder, gotOrder, "summary rows should be grouped by status in Created/Updated/Unchanged/Removed/Failed order, sorted alphabetically by skill within each group")
 	})
 
 	t.Run("sync from empty initial state", func(t *testing.T) {
 		cmd, mockSkillsDir, registryDir := newTestSyncSetup(t, ts)
 
+		var buf bytes.Buffer
+
+		cmd.logger = log.New(&buf, "", 0)
+
 		err := cmd.Run()
 		assertPartialFailure(t, err)
 
 		assertSyncResult(t, mockSkillsDir, registryDir)
+
+		assert.NotContains(t, buf.String(), "First time skill sync", "no banner should print when destDir already existed")
+
+		rows := parseMarkdownSummaryRows(t, buf.String())
+
+		for _, name := range []string{"no-update-skill-1", "to-update-skill-4", "accidentally-deleted-skill-5", "not-in-remote-and-name-collide-skill-3", "to-create-skill-7", "swap-skill-alpha", "swap-skill-beta"} {
+			row := findSummaryRow(t, rows, name, statusCreated)
+			assert.Equal(t, "-", row[2], "skill %s: a Created row's Previous Version should be '-'", name)
+		}
+
+		failedRow := findSummaryRow(t, rows, "malformed-skill-10", statusFailed)
+		assert.Contains(t, failedRow[4], "resolved description is empty", "the Failed row's Notes should carry the underlying error message")
 	})
+}
+
+// parseMarkdownSummaryRows parses the data rows of the Markdown summary
+// table printed by SyncCommand.Run — skipping its header and separator
+// lines — into [skill, status, previous, current, notes] cells, trimming
+// the padding tablewriter adds around each cell.
+func parseMarkdownSummaryRows(t *testing.T, output string) [][]string {
+	t.Helper()
+
+	var rows [][]string
+
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+
+		if !strings.HasPrefix(line, "|") {
+			continue
+		}
+
+		if strings.Trim(line, "|:- ") == "" {
+			continue
+		}
+
+		cells := strings.Split(strings.Trim(line, "|"), "|")
+
+		for i, c := range cells {
+			cells[i] = strings.TrimSpace(c)
+		}
+
+		rows = append(rows, cells)
+	}
+
+	require.NotEmpty(t, rows, "the summary table should have rendered at least a header row")
+
+	// rows[0] is always the header row (Skill, Status, Previous Version,
+	// Current Version, Notes); callers only care about data rows.
+	return rows[1:]
+}
+
+// findSummaryRow returns the first parsed summary row matching skill and
+// status, failing the test if none is found.
+func findSummaryRow(t *testing.T, rows [][]string, skill, status string) []string {
+	t.Helper()
+
+	for _, row := range rows {
+		if row[0] == skill && row[1] == status {
+			return row
+		}
+	}
+
+	t.Fatalf("expected a %s row for skill %q, got rows: %v", status, skill, rows)
+
+	return nil
+}
+
+// assertSummaryRow asserts that rows contains exactly one row for skill
+// under status with the given Previous Version, Current Version, and
+// Notes.
+func assertSummaryRow(t *testing.T, rows [][]string, skill, status, previous, current, notes string) {
+	t.Helper()
+
+	row := findSummaryRow(t, rows, skill, status)
+
+	assert.Equal(t, previous, row[2], "skill %s: unexpected Previous Version", skill)
+	assert.Equal(t, current, row[3], "skill %s: unexpected Current Version", skill)
+	assert.Equal(t, notes, row[4], "skill %s: unexpected Notes", skill)
+}
+
+// newSingleSkillTestServer returns a mocked Registry server whose
+// list_skills response always names exactly one skill (id, name,
+// remoteVersion), and whose get_skill_content response for that id
+// either succeeds with content (failContent false) or responds with a
+// forced 500 (failContent true). The returned pointer reports whether
+// get_skill_content was ever requested.
+func newSingleSkillTestServer(t *testing.T, id, name string, remoteVersion int, content Content, failContent bool) (ts *httptest.Server, contentRequested *bool) {
+	t.Helper()
+
+	requested := false
+
+	mux := http.NewServeMux()
+
+	mux.Handle(fmt.Sprintf("GET %s/api/v1/skills", registryBasePath), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := json.Marshal(ListResponse{Skills: []Metadata{{Id: id, Name: name, Version: remoteVersion}}})
+		require.NoError(t, err, "should be able to marshal the mock list_skills response")
+
+		_, err = w.Write(body)
+		require.NoError(t, err, "should be able to return the mock list_skills response")
+	}))
+
+	mux.Handle(fmt.Sprintf("GET %s/api/v1/skills/{skillId}/content", registryBasePath), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = true
+
+		if failContent {
+			w.WriteHeader(http.StatusInternalServerError)
+
+			_, err := w.Write([]byte("forced get_skill_content failure"))
+			require.NoError(t, err, "should be able to write the forced failure response body")
+
+			return
+		}
+
+		content.Id = id
+		content.Name = name
+
+		body, err := json.Marshal(content)
+		require.NoError(t, err, "should be able to marshal the mock get_skill_content response")
+
+		_, err = w.Write(body)
+		require.NoError(t, err, "should be able to return the mock get_skill_content response")
+	}))
+
+	ts = httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	return ts, &requested
+}
+
+// writeSingleSkillManifest writes a manifest file recording exactly one
+// skill (id, name, localVersion) to registryDir.
+func writeSingleSkillManifest(t *testing.T, registryDir, id, name string, localVersion int) {
+	t.Helper()
+
+	manifest := ManifestV1{
+		SchemaVersion: manifestSchemaVersion,
+		Description:   manifestDescription,
+		Skills:        []Metadata{{Id: id, Name: name, Version: localVersion}},
+	}
+
+	body, err := json.Marshal(manifest)
+	require.NoError(t, err, "should be able to marshal the single-skill manifest fixture")
+
+	err = os.WriteFile(filepath.Join(registryDir, manifestFileName), body, 0444)
+	require.NoError(t, err, "should be able to write the single-skill manifest fixture")
+}
+
+// TestSyncCommandRunFirstTimeBanner covers the first-time-sync banner:
+// present, followed by a blank line and the summary table, only on the
+// run where destDir did not already exist; absent on every later run.
+func TestSyncCommandRunFirstTimeBanner(t *testing.T) {
+	ts, _ := newSingleSkillTestServer(t, "banner-1", "test-skill", 1, Content{Description: "a test skill", Body: "Some body.\n"}, false)
+
+	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
+
+	destDir := filepath.Join(mockSkillsDir, "not-yet-created")
+	cmd.destDir = destDir
+
+	var buf bytes.Buffer
+
+	cmd.logger = log.New(&buf, "", 0)
+
+	err := cmd.Run()
+	require.NoError(t, err, "Run should succeed creating destDir for the first time")
+
+	lines := strings.Split(buf.String(), "\n")
+	require.GreaterOrEqual(t, len(lines), 3, "output should contain at least the banner sentence, a blank line, and the table header")
+	assert.Equal(t, fmt.Sprintf("First time skill sync. The %s directory is created.", destDir), lines[0], "the first line should be the first-time banner")
+	assert.Empty(t, lines[1], "a blank line should follow the banner")
+	assert.Contains(t, lines[2], "Skill", "the summary table header should follow the blank line")
+
+	buf.Reset()
+
+	err = cmd.Run()
+	require.NoError(t, err, "Run should succeed again now that destDir exists")
+
+	assert.NotContains(t, buf.String(), "First time skill sync", "the banner should not print once destDir already exists")
+}
+
+// TestSyncCommandRunRecreatesMissingFolder covers the case where a
+// skill's recorded LocalVersion still matches RemoteVersion under the
+// same name, but its local folder was manually deleted between runs:
+// needChange must still force a refresh, and the summary must report it
+// as Updated with the recreated note rather than Unchanged.
+func TestSyncCommandRunRecreatesMissingFolder(t *testing.T) {
+	content := Content{Description: "a test skill", Body: "# Test Skill\n\nSome fetched content.\n"}
+
+	ts, contentRequested := newSingleSkillTestServer(t, "recreate-1", "test-skill", 1, content, false)
+
+	cmd, mockSkillsDir, registryDir := newTestSyncSetup(t, ts)
+
+	writeSingleSkillManifest(t, registryDir, "recreate-1", "test-skill", 1)
+
+	// mockSkillsDir/test-skill is deliberately never created, simulating a
+	// folder deleted by hand between runs.
+
+	var buf bytes.Buffer
+
+	cmd.logger = log.New(&buf, "", 0)
+
+	err := cmd.Run()
+	require.NoError(t, err, "Run should succeed recreating the missing folder")
+
+	assert.True(t, *contentRequested, "get_skill_content should be requested to rebuild the missing folder")
+
+	rendered, err := os.ReadFile(filepath.Join(mockSkillsDir, "test-skill", "SKILL.md"))
+	require.NoError(t, err, "the missing skill folder should have been recreated on disk")
+	assert.Contains(t, string(rendered), "Some fetched content.", "the recreated SKILL.md should contain the fetched body")
+
+	rows := parseMarkdownSummaryRows(t, buf.String())
+	assertSummaryRow(t, rows, "test-skill", statusUpdated, "1", "1", recreatedNote)
+}
+
+// TestSyncCommandRunLeavesUnchangedSkillUntouched covers the converse,
+// explicitly out-of-scope case: a local folder whose contents were
+// hand-edited while its name and recorded version stayed put must be
+// reported Unchanged and left completely untouched — stageOne only
+// stats the folder, it never diffs file contents.
+func TestSyncCommandRunLeavesUnchangedSkillUntouched(t *testing.T) {
+	// failContent: true makes the test fail loudly if stageOne ever calls
+	// get_skill_content for this unchanged skill.
+	ts, contentRequested := newSingleSkillTestServer(t, "unchanged-1", "test-skill", 1, Content{}, true)
+
+	cmd, mockSkillsDir, registryDir := newTestSyncSetup(t, ts)
+
+	writeSingleSkillManifest(t, registryDir, "unchanged-1", "test-skill", 1)
+
+	err := os.MkdirAll(filepath.Join(mockSkillsDir, "test-skill"), 0755)
+	require.NoError(t, err, "should be able to create the pre-existing skill folder")
+
+	const corrupted = "corrupted content that does not match what the Registry would render"
+
+	err = os.WriteFile(filepath.Join(mockSkillsDir, "test-skill", "SKILL.md"), []byte(corrupted), 0644)
+	require.NoError(t, err, "should be able to write the hand-edited SKILL.md fixture")
+
+	var buf bytes.Buffer
+
+	cmd.logger = log.New(&buf, "", 0)
+
+	err = cmd.Run()
+	require.NoError(t, err, "Run should succeed leaving the unchanged skill untouched")
+
+	assert.False(t, *contentRequested, "get_skill_content should never be requested for a skill whose recorded name/version already match remote")
+
+	actual, err := os.ReadFile(filepath.Join(mockSkillsDir, "test-skill", "SKILL.md"))
+	require.NoError(t, err, "the skill folder should still be present")
+	assert.Equal(t, corrupted, string(actual), "content drift under an unchanged name/version must not be detected or touched")
+
+	rows := parseMarkdownSummaryRows(t, buf.String())
+	assertSummaryRow(t, rows, "test-skill", statusUnchanged, "1", "1", "")
+}
+
+// TestSyncCommandRunFailedUpdateLeavesOldFolderIntact covers a forced
+// mid-update failure: stageOne's reordered delete-after-stage sequence
+// means a failure before the (now-final) atomicRemoveAll step must leave
+// the pre-existing LocalName folder completely intact.
+func TestSyncCommandRunFailedUpdateLeavesOldFolderIntact(t *testing.T) {
+	ts, _ := newSingleSkillTestServer(t, "fail-1", "test-skill", 2, Content{}, true)
+
+	cmd, mockSkillsDir, registryDir := newTestSyncSetup(t, ts)
+
+	writeSingleSkillManifest(t, registryDir, "fail-1", "test-skill", 1)
+
+	err := os.MkdirAll(filepath.Join(mockSkillsDir, "test-skill"), 0755)
+	require.NoError(t, err, "should be able to create the pre-existing skill folder")
+
+	const original = "original content that must survive a failed update"
+
+	err = os.WriteFile(filepath.Join(mockSkillsDir, "test-skill", "SKILL.md"), []byte(original), 0644)
+	require.NoError(t, err, "should be able to write the pre-existing SKILL.md fixture")
+
+	var buf bytes.Buffer
+
+	cmd.logger = log.New(&buf, "", 0)
+
+	err = cmd.Run()
+	require.Error(t, err, "Run should surface the forced content-fetch failure")
+	assert.Contains(t, err.Error(), "test-skill", "the returned error should name the failed skill")
+
+	actual, err := os.ReadFile(filepath.Join(mockSkillsDir, "test-skill", "SKILL.md"))
+	require.NoError(t, err, "the old skill folder must still be present after a failed update")
+	assert.Equal(t, original, string(actual), "a failed update must leave the pre-existing folder completely untouched")
+
+	rows := parseMarkdownSummaryRows(t, buf.String())
+	failedRow := findSummaryRow(t, rows, "test-skill", statusFailed)
+	assert.Equal(t, "1", failedRow[2], "a failed update's Previous Version should be the recorded LocalVersion")
+	assert.Equal(t, "1", failedRow[3], "a failed update's Current Version should reflect that the old folder is still present on disk")
+	assert.Contains(t, failedRow[4], "forced get_skill_content failure", "the Failed row's Notes should carry the underlying error message")
+}
+
+// TestSyncCommandRunFailedUpdateOnAlreadyMissingFolder covers a spec
+// whose local folder was already missing before the run started, whose
+// stageOne call then also fails: the Failed row's Current Version must
+// be "-", not a stale spec.LocalVersion, since nothing is actually
+// present on disk.
+func TestSyncCommandRunFailedUpdateOnAlreadyMissingFolder(t *testing.T) {
+	ts, _ := newSingleSkillTestServer(t, "fail-missing-1", "test-skill", 1, Content{}, true)
+
+	cmd, mockSkillsDir, registryDir := newTestSyncSetup(t, ts)
+
+	writeSingleSkillManifest(t, registryDir, "fail-missing-1", "test-skill", 1)
+
+	// mockSkillsDir/test-skill is deliberately never created.
+
+	var buf bytes.Buffer
+
+	cmd.logger = log.New(&buf, "", 0)
+
+	err := cmd.Run()
+	require.Error(t, err, "Run should surface the forced content-fetch failure")
+	assert.Contains(t, err.Error(), "test-skill", "the returned error should name the failed skill")
+
+	_, statErr := os.Stat(filepath.Join(mockSkillsDir, "test-skill"))
+	assert.True(t, os.IsNotExist(statErr), "the skill folder should still be absent after a failed recreate attempt")
+
+	rows := parseMarkdownSummaryRows(t, buf.String())
+	failedRow := findSummaryRow(t, rows, "test-skill", statusFailed)
+	assert.Equal(t, "1", failedRow[2], "a failed update's Previous Version should be the recorded LocalVersion")
+	assert.Equal(t, "-", failedRow[3], "a failed update's Current Version should be '-' since nothing is present on disk")
 }
 
 // TestSyncCommandRunRejectsUnsafeSkillName is a defense-in-depth check
