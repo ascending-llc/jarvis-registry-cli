@@ -46,6 +46,7 @@ func TestIsSafeSkillName(t *testing.T) {
 		{name: "nested/path", safe: false},
 		{name: `nested\path`, safe: false},
 		{name: "/etc/passwd", safe: false},
+		{name: "evil|skill", safe: false},
 	}
 
 	for _, c := range cases {
@@ -278,7 +279,7 @@ func parseMarkdownSummaryRows(t *testing.T, output string) [][]string {
 			continue
 		}
 
-		cells := strings.Split(strings.Trim(line, "|"), "|")
+		cells := splitMarkdownRow(line)
 
 		for i, c := range cells {
 			cells[i] = strings.TrimSpace(c)
@@ -292,6 +293,38 @@ func parseMarkdownSummaryRows(t *testing.T, output string) [][]string {
 	// rows[0] is always the header row (Skill, Status, Previous Version,
 	// Current Version, Notes); callers only care about data rows.
 	return rows[1:]
+}
+
+// splitMarkdownRow splits a Markdown table row line into its cell
+// substrings, mirroring how a Markdown table renderer/parser treats an
+// escaped pipe: "\|" is a literal pipe character within a cell, not a
+// column separator, so it is un-escaped into the cell's content rather
+// than being split on.
+func splitMarkdownRow(line string) []string {
+	runes := []rune(strings.Trim(line, "|"))
+
+	var (
+		cells []string
+		b     strings.Builder
+	)
+
+	for i := 0; i < len(runes); i++ {
+		switch {
+		case runes[i] == '\\' && i+1 < len(runes) && runes[i+1] == '|':
+			b.WriteRune('|')
+
+			i++
+		case runes[i] == '|':
+			cells = append(cells, b.String())
+			b.Reset()
+		default:
+			b.WriteRune(runes[i])
+		}
+	}
+
+	cells = append(cells, b.String())
+
+	return cells
 }
 
 // findSummaryRow returns the first parsed summary row matching skill and
@@ -589,6 +622,77 @@ func TestSyncCommandRunRejectsUnsafeSkillName(t *testing.T) {
 	entries, err := os.ReadDir(mockSkillsDir)
 	require.NoError(t, err, "should be able to list the mocked skills directory after the rejected sync")
 	assert.Empty(t, entries, "no skill folder should have been created for the unsafe skill name")
+}
+
+// TestSyncCommandRunRejectsSkillNameWithPipe covers the other half of
+// isSafeSkillName's rejection set: a "|" in a skill name is filesystem-safe
+// but would corrupt the Markdown sync summary table's column structure
+// (tablewriter's Markdown renderer does not escape cell content), so Run
+// must reject it up front, the same way it rejects a path-traversal name.
+func TestSyncCommandRunRejectsSkillNameWithPipe(t *testing.T) {
+	mux := http.NewServeMux()
+
+	mux.Handle(fmt.Sprintf("GET %s/api/v1/skills", registryBasePath), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := w.Write([]byte(`{"skills":[{"id":"pipe-1","name":"evil|skill","version":1}]}`))
+		require.NoError(t, err, "should be able to return the malicious mock list_skills response")
+	}))
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
+
+	err := cmd.Run()
+	require.Error(t, err, "Run should reject a remote skill name containing a pipe character")
+	assert.Contains(t, err.Error(), "unsafe to use as a filesystem path", "error should explain why Run failed")
+
+	entries, err := os.ReadDir(mockSkillsDir)
+	require.NoError(t, err, "should be able to list the mocked skills directory after the rejected sync")
+	assert.Empty(t, entries, "no skill folder should have been created for the unsafe skill name")
+}
+
+// TestSyncCommandRunEscapesPipeInSummaryNotes covers a Failed row whose
+// Notes come from an underlying error this package does not control — here,
+// a Registry error response body embedded verbatim by Client.checkStatusCode
+// — that happens to contain a "|". isSafeSkillName only guards Skill cells;
+// this content must instead be escaped so the printed table's column
+// structure survives.
+func TestSyncCommandRunEscapesPipeInSummaryNotes(t *testing.T) {
+	const failureBody = "registry error: field 'name' | invalid"
+
+	mux := http.NewServeMux()
+
+	mux.Handle(fmt.Sprintf("GET %s/api/v1/skills", registryBasePath), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := w.Write([]byte(`{"skills":[{"id":"pipe-note-1","name":"test-skill","version":1}]}`))
+		require.NoError(t, err, "should be able to return the mock list_skills response")
+	}))
+
+	mux.Handle(fmt.Sprintf("GET %s/api/v1/skills/{skillId}/content", registryBasePath), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+
+		_, err := w.Write([]byte(failureBody))
+		require.NoError(t, err, "should be able to write the forced failure response body")
+	}))
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	cmd, _, registryDir := newTestSyncSetup(t, ts)
+
+	writeSingleSkillManifest(t, registryDir, "pipe-note-1", "test-skill", 1)
+
+	var buf bytes.Buffer
+
+	cmd.logger = log.New(&buf, "", 0)
+
+	err := cmd.Run()
+	require.Error(t, err, "Run should surface the forced content-fetch failure")
+
+	assert.Contains(t, buf.String(), `\|`, "the '|' in the Notes cell must be escaped in the raw table output")
+
+	rows := parseMarkdownSummaryRows(t, buf.String())
+	failedRow := findSummaryRow(t, rows, "test-skill", statusFailed)
+	assert.Contains(t, failedRow[4], failureBody, "the Failed row's Notes cell must still parse back to the full, unescaped error message")
 }
 
 func newTestSyncSetup(t *testing.T, ts *httptest.Server) (cmd SyncCommand, mockSkillsDir, registryDir string) {

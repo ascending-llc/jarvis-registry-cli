@@ -204,10 +204,11 @@ func (c *SyncCommand) Run() (err error) {
 	}
 
 	// reject any remote skill name that is unsafe to use as a filesystem
-	// path component before it reaches any os.* call
+	// path component, or that would corrupt the Markdown sync summary
+	// table, before it reaches any os.* call
 	for _, r := range remoteSkills {
 		if !isSafeSkillName(r.Name) {
-			return fmt.Errorf("remote skill %s (id %s) has a name that is unsafe to use as a filesystem path", r.Name, r.Id)
+			return fmt.Errorf("remote skill %s (id %s) has a name that is unsafe to use as a filesystem path or in the sync summary table", r.Name, r.Id)
 		}
 	}
 
@@ -280,17 +281,20 @@ func joinErrors(outcomes []SyncOutcome) error {
 	return errors.Join(errs...)
 }
 
-// isSafeSkillName reports whether name can be safely used as a single
-// filesystem path component under destDir. filepath.Join only lexically
-// normalizes its arguments; it does not confine the result to destDir, so
-// a name such as "../../etc" must be rejected explicitly rather than
-// relied upon to be cleaned away.
+// isSafeSkillName reports whether name can be safely used both as a single
+// filesystem path component under destDir and as a Skill cell in the
+// Markdown sync summary table (see printSummary). filepath.Join only
+// lexically normalizes its arguments; it does not confine the result to
+// destDir, so a name such as "../../etc" must be rejected explicitly
+// rather than relied upon to be cleaned away. "|" is rejected because the
+// summary table's Markdown renderer does not escape it: an unescaped "|"
+// in a Skill cell corrupts the table's column structure.
 func isSafeSkillName(name string) bool {
 	if name == "" || name == "." || name == ".." {
 		return false
 	}
 
-	return !strings.ContainsAny(name, `/\`)
+	return !strings.ContainsAny(name, `/\|`)
 }
 
 // guaranteeDestDir ensures c.destDir exists as a directory, creating it
@@ -618,11 +622,21 @@ func (c *SyncCommand) buildSummaryRows(toCreate []SyncSpec, createOutcomes []Syn
 		sort.Slice(group, func(i, j int) bool { return group[i].Skill < group[j].Skill })
 
 		for _, r := range group {
-			rows = append(rows, []string{r.Skill, r.Status, r.Previous, r.Current, r.Notes})
+			rows = append(rows, []string{r.Skill, r.Status, r.Previous, r.Current, escapePipe(r.Notes)})
 		}
 	}
 
 	return rows
+}
+
+// escapePipe backslash-escapes every "|" in s. Unlike a skill name (see
+// isSafeSkillName), Notes can carry arbitrary text this package does not
+// control — an underlying error's message, which may itself embed a raw
+// Registry HTTP response body (see Client.checkStatusCode) — so it must be
+// escaped for the summary table's Markdown renderer, which does not escape
+// cell content on its own, rather than rejected outright.
+func escapePipe(s string) string {
+	return strings.ReplaceAll(s, "|", `\|`)
 }
 
 // updateNotes computes the Notes value for an Updated summary row: a
