@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 type (
@@ -19,9 +20,12 @@ type (
 
 	// ManifestV1 is the on-disk schema of the sync manifest file.
 	ManifestV1 struct {
-		Description   string     `json:"description"`
-		Skills        []Metadata `json:"skills"`
-		SchemaVersion int        `json:"schemaVersion"`
+		LastSyncedAt      time.Time  `json:"lastSyncedAt,omitzero"`
+		Description       string     `json:"description"`
+		ManagedBy         string     `json:"managedBy"`
+		Skills            []Metadata `json:"skills"`
+		SchemaVersion     int        `json:"schemaVersion"`
+		SyncSkillsVersion int        `json:"syncSkillsVersion"`
 	}
 )
 
@@ -34,36 +38,44 @@ const (
 )
 
 // NewManifestReadWriter returns a ManifestReadWriter for the manifest file
-// inside registryDir.
-func NewManifestReadWriter(registryDir string) ManifestReadWriter {
-	return ManifestReadWriter{path: filepath.Join(registryDir, manifestFileName)}
+// inside pluginRoot.
+func NewManifestReadWriter(pluginRoot string) ManifestReadWriter {
+	return ManifestReadWriter{path: filepath.Join(pluginRoot, manifestFileName)}
 }
 
-// ReadSkills returns the skills recorded in the manifest file, or nil if
-// the file does not exist.
-func (mrw ManifestReadWriter) ReadSkills() ([]Metadata, error) {
+// ReadManifest returns the manifest file's contents, or a zero ManifestV1
+// if the file does not exist or its content is malformed. A corrupt
+// manifest and a missing one are treated identically: once past the
+// consent gate (see ensurePluginRootConsent), neither leaves a
+// trustworthy record of a prior sync, and Run resyncs every skill fresh
+// from the Registry in that situation regardless. A read failure (e.g.
+// the file exists but a permission error prevents reading it) is still a
+// hard error, since that indicates a real environment issue self-healing
+// can't fix.
+func (mrw ManifestReadWriter) ReadManifest() (ManifestV1, error) {
 	var m ManifestV1
 
 	var err error
 
 	if _, err = os.Stat(mrw.path); errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return ManifestV1{}, nil
 	}
 
 	var content []byte
 
 	if content, err = os.ReadFile(mrw.path); err != nil {
-		return nil, fmt.Errorf("manifest file exists at %s but cannot be read: %s", mrw.path, err.Error())
+		return ManifestV1{}, fmt.Errorf("manifest file exists at %s but cannot be read: %s", mrw.path, err.Error())
 	}
 
 	if err = json.Unmarshal(content, &m); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal manifest file at %s: %s", mrw.path, err.Error())
+		return ManifestV1{}, nil
 	}
 
-	return m.Skills, nil
+	return m, nil
 }
 
-// WriteManifest overwrites the manifest file with skills, marking the
+// WriteManifest overwrites the manifest file with skills, stamping
+// ManagedBy, a fresh LastSyncedAt, and syncSkillsVersion, and marking the
 // file read-only afterward. It writes to a temp file in the same
 // directory first and renames it into place: os.Rename is a single,
 // same-filesystem, atomic syscall, so a crash mid-write can never leave
@@ -71,11 +83,14 @@ func (mrw ManifestReadWriter) ReadSkills() ([]Metadata, error) {
 // an existing target does not require that target to be writable on
 // POSIX, since rename relinks a directory entry rather than opening the
 // target for writing.
-func (mrw ManifestReadWriter) WriteManifest(skills []Metadata) error {
+func (mrw ManifestReadWriter) WriteManifest(skills []Metadata, syncSkillsVersion int) error {
 	m := ManifestV1{
-		SchemaVersion: manifestSchemaVersion,
-		Description:   manifestDescription,
-		Skills:        skills,
+		SchemaVersion:     manifestSchemaVersion,
+		Description:       manifestDescription,
+		Skills:            skills,
+		ManagedBy:         managedByValue,
+		LastSyncedAt:      time.Now().UTC(),
+		SyncSkillsVersion: syncSkillsVersion,
 	}
 
 	content, err := json.Marshal(m)

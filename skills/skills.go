@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mattn/go-isatty"
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/renderer"
 	"github.com/olekukonko/tablewriter/tw"
@@ -42,17 +44,21 @@ type (
 	// caller on the Registry, creating, updating, and deleting local
 	// skill folders as needed.
 	SyncCommand struct {
-		userHomeDir    string
-		registryDir    string
-		destDir        string
-		tempDir        string
-		baseUrl        string
-		authBaseUrl    string
 		logger         Logger
-		configLoadFunc func(string) (cfg.Config, error)
+		stdin          io.Reader
 		tp             TokenProvider
+		stderrLogger   Logger
+		isTerminal     func() bool
+		configLoadFunc func(string) (cfg.Config, error)
 		client         Client
+		destDir        string
+		authBaseUrl    string
+		baseUrl        string
+		tempDir        string
+		userHomeDir    string
 		mrw            ManifestReadWriter
+		pluginRoot     string
+		registryDir    string
 	}
 
 	// SyncSpec describes one skill's local and remote state, as compared
@@ -122,7 +128,8 @@ const (
 )
 
 // BeforeReset sets defaults for SyncCommand that don't depend on parsed
-// flags: the user's home directory, the config loader, and the logger.
+// flags: the user's home directory, the config loader, the stdout/stderr
+// loggers, and the consent gate's terminal-detection and stdin source.
 func (c *SyncCommand) BeforeReset() (err error) {
 	if c.userHomeDir, err = os.UserHomeDir(); err != nil {
 		return fmt.Errorf("could not locate user home directory: %s", err.Error())
@@ -132,12 +139,18 @@ func (c *SyncCommand) BeforeReset() (err error) {
 
 	c.logger = log.New(os.Stdout, "", 0)
 
+	c.stderrLogger = log.New(os.Stderr, "", 0)
+
+	c.isTerminal = func() bool { return isatty.IsTerminal(os.Stdin.Fd()) }
+
+	c.stdin = os.Stdin
+
 	return nil
 }
 
 // AfterApply derives SyncCommand's remaining dependencies from the loaded
-// config: the registry directory, destination folder, Registry and
-// auth-server base URLs, and token provider.
+// config: the registry directory, plugin root, destination folder,
+// Registry and auth-server base URLs, and token provider.
 func (c *SyncCommand) AfterApply() (err error) {
 	c.registryDir = filepath.Join(c.userHomeDir, cfg.RegistryDirName)
 
@@ -145,6 +158,8 @@ func (c *SyncCommand) AfterApply() (err error) {
 	if err != nil {
 		return fmt.Errorf("failed to load config options: %s", err.Error())
 	}
+
+	c.pluginRoot = config.Local.PluginRoot
 
 	c.destDir = config.Local.Dest
 
@@ -178,16 +193,49 @@ func (c *SyncCommand) Run() (err error) {
 		return fmt.Errorf("failed to create Registry client: %s", err.Error())
 	}
 
-	c.mrw = NewManifestReadWriter(c.registryDir)
+	c.mrw = NewManifestReadWriter(c.pluginRoot)
 
-	// make sure the destination folder exists
-	destDirCreated, err := c.guaranteeDestDir()
+	// acquire the advisory lock for this plugin root before touching the
+	// filesystem at all, so two concurrent invocations against the same
+	// target can't race on the consent check or the bootstrap writes
+	release, err := acquireLock(c.registryDir, c.pluginRoot)
 	if err != nil {
 		return err
 	}
 
+	defer release()
+
+	// gate any mutation of a pre-existing, possibly foreign plugin root
+	if err = c.ensurePluginRootConsent(); err != nil {
+		return err
+	}
+
+	// consent already granted: create the plugin root if it doesn't exist yet
+	if err = os.MkdirAll(c.pluginRoot, 0755); err != nil {
+		return fmt.Errorf("failed to create plugin root at %s: %s", c.pluginRoot, err.Error())
+	}
+
+	// reconcile the CLI-owned plugin manifest
+	pluginJSONCreated, err := reconcilePluginManifest(c.pluginRoot, c.stderrLogger)
+	if err != nil {
+		return err
+	}
+
+	// make sure the destination folder exists
+	if err = c.guaranteeDestDir(); err != nil {
+		return err
+	}
+
 	// gather local skills metadata
-	localSkills, err := c.mrw.ReadSkills()
+	manifest, err := c.mrw.ReadManifest()
+	if err != nil {
+		return err
+	}
+
+	localSkills := manifest.Skills
+
+	// reconcile the CLI-owned sync-skills wrapper skill
+	newSyncSkillsVersion, err := reconcileSyncSkillsWrapper(c.destDir, manifest.SyncSkillsVersion, c.stderrLogger)
 	if err != nil {
 		return err
 	}
@@ -204,11 +252,16 @@ func (c *SyncCommand) Run() (err error) {
 	}
 
 	// reject any remote skill name that is unsafe to use as a filesystem
-	// path component, or that would corrupt the Markdown sync summary
-	// table, before it reaches any os.* call
+	// path component, that would corrupt the Markdown sync summary table,
+	// or that collides with this CLI's own reserved wrapper skill name,
+	// before it reaches any os.* call
 	for _, r := range remoteSkills {
 		if !isSafeSkillName(r.Name) {
 			return fmt.Errorf("remote skill %s (id %s) has a name that is unsafe to use as a filesystem path or in the sync summary table", r.Name, r.Id)
+		}
+
+		if strings.EqualFold(r.Name, reservedSyncSkillsName) {
+			return fmt.Errorf("remote skill %s (id %s) is named %q, which is reserved for this CLI's own wrapper skill", r.Name, r.Id, reservedSyncSkillsName)
 		}
 	}
 
@@ -246,11 +299,11 @@ func (c *SyncCommand) Run() (err error) {
 	// failure (e.g. invalid frontmatter) must not prevent every other skill
 	// in this run from being synced and recorded.
 	succeeded := succeededOnly(slices.Concat(updateOutcomes, createOutcomes))
-	if err = c.mrw.WriteManifest(succeeded); err != nil {
+	if err = c.mrw.WriteManifest(succeeded, newSyncSkillsVersion); err != nil {
 		return fmt.Errorf("failed to write manifest file after syncing: %s", err.Error())
 	}
 
-	c.printSummary(destDirCreated, toCreate, createOutcomes, toUpdate, updateOutcomes, toDelete)
+	c.printSummary(pluginJSONCreated, toCreate, createOutcomes, toUpdate, updateOutcomes, toDelete)
 
 	return errors.Join(joinErrors(updateOutcomes), joinErrors(createOutcomes))
 }
@@ -298,23 +351,21 @@ func isSafeSkillName(name string) bool {
 }
 
 // guaranteeDestDir ensures c.destDir exists as a directory, creating it
-// if necessary. created is true only when c.destDir did not already
-// exist and had to be created, so Run can decide whether to print the
-// first-time sync banner.
-func (c *SyncCommand) guaranteeDestDir() (created bool, err error) {
+// if necessary.
+func (c *SyncCommand) guaranteeDestDir() error {
 	if stat, statErr := os.Stat(c.destDir); errors.Is(statErr, fs.ErrNotExist) {
-		if err = os.MkdirAll(c.destDir, 0755); err != nil {
-			return false, fmt.Errorf("failed to create skills folder at %s: %s", c.destDir, err.Error())
+		if err := os.MkdirAll(c.destDir, 0755); err != nil {
+			return fmt.Errorf("failed to create skills folder at %s: %s", c.destDir, err.Error())
 		}
 
-		return true, nil
+		return nil
 	} else if statErr != nil {
-		return false, fmt.Errorf("skills folder %s already exists but cannot be queried for stat: %s", c.destDir, statErr.Error())
+		return fmt.Errorf("skills folder %s already exists but cannot be queried for stat: %s", c.destDir, statErr.Error())
 	} else if !stat.IsDir() {
-		return false, fmt.Errorf("intended skills folder %s is already a file", c.destDir)
+		return fmt.Errorf("intended skills folder %s is already a file", c.destDir)
 	}
 
-	return false, nil
+	return nil
 }
 
 // atomicRemoveAll removes the directory tree at path by first renaming it
@@ -340,6 +391,10 @@ func atomicRemoveAll(path string) error {
 	return os.RemoveAll(trash)
 }
 
+// cleanDestDir removes every entry directly under c.destDir that isn't
+// named in skills, except reservedSyncSkillsName — the CLI-owned
+// sync-skills/ wrapper folder is never tracked in the manifest, but must
+// never be deleted regardless of manifest content.
 func (c *SyncCommand) cleanDestDir(skills []Metadata) error {
 	entries, err := os.ReadDir(c.destDir)
 	if err != nil {
@@ -349,6 +404,10 @@ func (c *SyncCommand) cleanDestDir(skills []Metadata) error {
 	toRemove := make(map[string]struct{}, len(entries))
 
 	for _, e := range entries {
+		if strings.EqualFold(e.Name(), reservedSyncSkillsName) {
+			continue
+		}
+
 		toRemove[e.Name()] = struct{}{}
 	}
 
@@ -556,11 +615,13 @@ func (c *SyncCommand) deleteMany(specs []SyncSpec) error {
 }
 
 // printSummary prints, via c.logger, the first-time sync banner (only
-// when destDirCreated is true, since that's the only run on which
-// c.destDir did not already exist) followed by the sync summary table.
-func (c *SyncCommand) printSummary(destDirCreated bool, toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec) {
-	if destDirCreated {
-		c.logger.Printf("First time skill sync. The %s directory is created.", c.destDir)
+// when pluginJSONCreated is true, since a brand-new
+// .claude-plugin/plugin.json is the one condition Claude Code's docs
+// confirm needs a new session, decoupled from whether c.destDir itself
+// happened to already exist) followed by the sync summary table.
+func (c *SyncCommand) printSummary(pluginJSONCreated bool, toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec) {
+	if pluginJSONCreated {
+		c.logger.Printf("First time skill sync. The %s plugin is created.", c.pluginRoot)
 		c.logger.Println()
 	}
 

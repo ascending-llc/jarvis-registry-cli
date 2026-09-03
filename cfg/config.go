@@ -31,13 +31,30 @@ type (
 		} `mapstructure:"registry"`
 
 		Local struct {
-			Dest string `mapstructure:"destination_folder"`
+			// ProjectPath is the root directory under which this CLI
+			// places its Claude Code skills-directory plugin, at
+			// <ProjectPath>/.claude/skills/jarvis-registry/. Optional;
+			// when unset, defaults to the user's home directory
+			// (personal scope, loads in every project). Set it to a
+			// repository root for a project-scope plugin instead.
+			ProjectPath string `mapstructure:"project_path"`
+
+			// PluginRoot is <ProjectPath>/.claude/skills/jarvis-registry/,
+			// derived by Load. Not read from config.yaml.
+			PluginRoot string `mapstructure:"-"`
+
+			// Dest is <PluginRoot>/skills/, the folder sync-skills
+			// reconciles Registry skills into. Derived by Load. Not
+			// read from config.yaml.
+			Dest string `mapstructure:"-"`
 		} `mapstructure:"local"`
 	}
 )
 
 // RegistryDirName is the name of the per-user directory, under the user's
-// home directory, that holds the CLI's config file and sync manifest.
+// home directory, that holds the CLI's config file and its advisory sync
+// locks (see skills.acquireLock). The sync manifest itself lives inside
+// the plugin root (Config.Local.PluginRoot), not here.
 const RegistryDirName = ".jarvis-registry"
 
 // homeTokenPattern matches literal $HOME / $USERPROFILE references, in either
@@ -48,10 +65,11 @@ var homeTokenPattern = regexp.MustCompile(`\$(?:HOME|USERPROFILE)\b|\$\{(?:HOME|
 
 // Load reads config.yaml (or config.yml) from registryDir, unmarshals it
 // into a Config, and validates and resolves its fields — expanding
-// Local.Dest to an absolute path, normalizing Registry.BaseUrl, and
-// defaulting Registry.AuthBaseUrl to Registry.BaseUrl when it isn't set. It
-// returns an error if neither file exists, the file cannot be parsed, or
-// validation fails.
+// Local.ProjectPath to an absolute path and deriving Local.PluginRoot and
+// Local.Dest from it, normalizing Registry.BaseUrl, and defaulting
+// Registry.AuthBaseUrl to Registry.BaseUrl when it isn't set. It returns an
+// error if neither file exists, the file cannot be parsed, or validation
+// fails.
 func Load(registryDir string) (config Config, err error) {
 	v := viper.New()
 
@@ -75,9 +93,12 @@ func Load(registryDir string) (config Config, err error) {
 		return config, fmt.Errorf("failed to parse config file at %s: %s", path, err.Error())
 	}
 
-	if config.Local.Dest, err = resolveDest(config.Local.Dest); err != nil {
-		return config, fmt.Errorf("invalid local.destination_folder in %s: %s", path, err.Error())
+	if config.Local.ProjectPath, err = resolveProjectPath(config.Local.ProjectPath); err != nil {
+		return config, fmt.Errorf("invalid local.project_path in %s: %s", path, err.Error())
 	}
+
+	config.Local.PluginRoot = filepath.Join(config.Local.ProjectPath, ".claude", "skills", "jarvis-registry")
+	config.Local.Dest = filepath.Join(config.Local.PluginRoot, "skills")
 
 	config.Registry.BaseUrl = strings.TrimSuffix(config.Registry.BaseUrl, "/")
 
@@ -96,18 +117,13 @@ func Load(registryDir string) (config Config, err error) {
 	return config, nil
 }
 
-// resolveDest expands a leading "~" and any literal $HOME / $USERPROFILE
-// reference in dest to the current user's home directory, then validates
-// that the result is safe to use as a sync destination. Sync deletes
-// anything inside this folder that isn't a tracked skill, so the resolved
-// path must be an unambiguous, absolute location that is not the home
-// directory or a filesystem root.
-func resolveDest(dest string) (string, error) {
+// resolveProjectPath expands a leading "~" and any literal $HOME /
+// $USERPROFILE reference in dest to the current user's home directory,
+// then validates that the result is an unambiguous, absolute location.
+// An empty dest defaults to the home directory, so the plugin loads in
+// personal scope by default.
+func resolveProjectPath(dest string) (string, error) {
 	dest = strings.TrimSpace(dest)
-
-	if dest == "" {
-		return "", errors.New("path must not be empty")
-	}
 
 	if strings.ContainsRune(dest, 0) {
 		return "", errors.New("path must not contain a NUL byte")
@@ -119,6 +135,8 @@ func resolveDest(dest string) (string, error) {
 	}
 
 	switch {
+	case dest == "":
+		dest = home
 	case dest == "~":
 		dest = home
 	case strings.HasPrefix(dest, "~/"), strings.HasPrefix(dest, `~\`):
@@ -133,10 +151,6 @@ func resolveDest(dest string) (string, error) {
 
 	if !filepath.IsAbs(dest) {
 		return "", fmt.Errorf("path %q must be absolute, or start with \"~\", \"$HOME\", or \"%%USERPROFILE%%\"", dest)
-	}
-
-	if dest == home || dest == filepath.Dir(dest) {
-		return "", fmt.Errorf("path %q is unsafe: it resolves to the home directory or a filesystem root, and sync deletes anything inside it that isn't a known skill", dest)
 	}
 
 	return dest, nil

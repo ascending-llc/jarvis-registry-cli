@@ -1,5 +1,5 @@
 local:
-  destination_folder: "~/jarvis-registry-cli-test-dest"
+  project_path: "~/jarvis-registry-cli-test-dest"
 
 registry:
   base_url: ""
