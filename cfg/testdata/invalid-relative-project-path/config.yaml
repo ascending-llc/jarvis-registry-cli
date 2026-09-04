@@ -1,5 +1,0 @@
-local:
-  project_path: "relative/path/dest"
-
-registry:
-  base_url: "https://example.com"

@@ -1,5 +1,0 @@
-local:
-  project_path: "$HOME/jarvis-registry-cli-test-dest"
-
-registry:
-  base_url: "https://example.com"

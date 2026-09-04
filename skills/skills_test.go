@@ -87,15 +87,13 @@ func TestSyncCommandAfterApply(t *testing.T) {
 			err := cmd.BeforeReset()
 			require.NoError(t, err, "should be able to call SyncCommand.BeforeReset without error")
 
-			pluginRoot := t.TempDir()
+			cmd.ProjectPath = t.TempDir()
 
 			cmd.configLoadFunc = func(string) (cfg.Config, error) {
 				var config cfg.Config
 
 				config.Registry.BaseUrl = c.baseUrl
 				config.Registry.AuthBaseUrl = c.authBaseUrl
-				config.Local.PluginRoot = pluginRoot
-				config.Local.Dest = filepath.Join(pluginRoot, "skills")
 
 				return config, nil
 			}
@@ -105,7 +103,7 @@ func TestSyncCommandAfterApply(t *testing.T) {
 
 			assert.Equal(t, c.baseUrl, cmd.baseUrl, "baseUrl should be taken from config.Registry.BaseUrl")
 			assert.Equal(t, c.wantAuthBaseUrl, cmd.authBaseUrl, "authBaseUrl should be taken from config.Registry.AuthBaseUrl, distinct from baseUrl when cfg.Load resolved it that way")
-			assert.Equal(t, pluginRoot, cmd.pluginRoot, "pluginRoot should be taken from config.Local.PluginRoot")
+			assert.Equal(t, filepath.Join(cmd.ProjectPath, ".claude", "skills", "jarvis-registry"), cmd.pluginRoot, "pluginRoot should be derived from ProjectPath")
 
 			require.NotNil(t, cmd.tp, "tp should be initialized")
 		})
@@ -925,10 +923,10 @@ func newTestSyncSetup(t *testing.T, ts *httptest.Server) (cmd SyncCommand, mockS
 	mockHomeDir, err := os.MkdirTemp("", "mock-user-home-dir")
 	require.NoError(t, err, "should be able to create temp directory as the mocked user home directory")
 
-	mockPluginRoot, err := os.MkdirTemp("", "mock-plugin-root")
-	require.NoError(t, err, "should be able to create temp directory as the mocked plugin root")
+	mockProjectDir, err := os.MkdirTemp("", "mock-project-dir")
+	require.NoError(t, err, "should be able to create temp directory as the mocked project directory")
 
-	require.NoError(t, os.RemoveAll(mockPluginRoot), "should be able to remove the mocked plugin root so Run can bootstrap it from scratch")
+	mockPluginRoot := filepath.Join(mockProjectDir, ".claude", "skills", "jarvis-registry")
 
 	mockSkillsDir = filepath.Join(mockPluginRoot, "skills")
 
@@ -944,7 +942,7 @@ func newTestSyncSetup(t *testing.T, ts *httptest.Server) (cmd SyncCommand, mockS
 	t.Cleanup(func() {
 		_ = os.RemoveAll(mockHomeDir)
 
-		_ = os.RemoveAll(mockPluginRoot)
+		_ = os.RemoveAll(mockProjectDir)
 
 		_ = os.Setenv("HOME", originalHome)
 
@@ -956,16 +954,14 @@ func newTestSyncSetup(t *testing.T, ts *httptest.Server) (cmd SyncCommand, mockS
 	err = cmd.BeforeReset()
 	require.NoError(t, err, "should be able to call SyncCommand.BeforeReset without error")
 
+	cmd.ProjectPath = mockProjectDir
+
 	cmd.configLoadFunc = func(string) (cfg.Config, error) {
 		var config cfg.Config
 
 		config.Registry.BaseUrl = ts.URL
 
 		config.Registry.AuthBaseUrl = ts.URL
-
-		config.Local.PluginRoot = mockPluginRoot
-
-		config.Local.Dest = mockSkillsDir
 
 		return config, nil
 	}
