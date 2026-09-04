@@ -16,7 +16,7 @@ func main() {
 			Login  auth.LoginCommand  `cmd:"" name:"login" help:"Log in to the Registry."`
 			Status auth.StatusCommand `cmd:"" name:"status" help:"Show Registry authentication status."`
 		} `cmd:"" name:"auth" help:"Manage Registry authentication."`
-		Version kong.VersionFlag `help:"Print version and exit."`
+		Version kong.VersionFlag `short:"v" help:"Print version and exit."`
 	}
 
 	ctx := kong.Parse(

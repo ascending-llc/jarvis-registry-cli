@@ -1,0 +1,3 @@
+completions/*.bash linguist-language=Bash
+completions/*.zsh linguist-language=Zsh
+completions/*.fish linguist-language=Fish
