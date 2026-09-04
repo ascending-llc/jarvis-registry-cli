@@ -1,5 +1,2 @@
-local:
-  project_path: "~/jarvis-registry-cli-test-dest"
-
 registry:
   base_url: "http://127.0.0.1:3000"

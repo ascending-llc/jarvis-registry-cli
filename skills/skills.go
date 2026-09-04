@@ -44,6 +44,14 @@ type (
 	// caller on the Registry, creating, updating, and deleting local
 	// skill folders as needed.
 	SyncCommand struct {
+		// ProjectPath is the directory the Claude Code skills-directory
+		// plugin is placed under, at <ProjectPath>/.claude/skills/jarvis-registry/.
+		// Optional; relative paths (including "." for the current
+		// directory) resolve against the current working directory.
+		// Defaults to the user's home directory (personal scope) when
+		// omitted.
+		ProjectPath string `arg:"" optional:"" help:"Directory the Claude Code skills-directory plugin is placed under, at <path>/.claude/skills/jarvis-registry/. Optional; relative paths (including \".\" for the current directory) resolve against the current working directory. Defaults to the user's home directory (personal scope) when omitted."`
+
 		logger         Logger
 		stdin          io.Reader
 		tp             TokenProvider
@@ -148,20 +156,26 @@ func (c *SyncCommand) BeforeReset() (err error) {
 	return nil
 }
 
-// AfterApply derives SyncCommand's remaining dependencies from the loaded
-// config: the registry directory, plugin root, destination folder,
-// Registry and auth-server base URLs, and token provider.
+// AfterApply derives SyncCommand's remaining dependencies: the registry
+// directory, plugin root and destination folder (resolved from
+// ProjectPath), the loaded config's Registry and auth-server base URLs,
+// and the token provider.
 func (c *SyncCommand) AfterApply() (err error) {
 	c.registryDir = filepath.Join(c.userHomeDir, cfg.RegistryDirName)
+
+	resolvedProjectPath, err := resolveProjectPath(c.ProjectPath)
+	if err != nil {
+		return fmt.Errorf("invalid project path %q: %s", c.ProjectPath, err.Error())
+	}
+
+	c.pluginRoot = filepath.Join(resolvedProjectPath, ".claude", "skills", "jarvis-registry")
+
+	c.destDir = filepath.Join(c.pluginRoot, "skills")
 
 	config, err := c.configLoadFunc(c.registryDir)
 	if err != nil {
 		return fmt.Errorf("failed to load config options: %s", err.Error())
 	}
-
-	c.pluginRoot = config.Local.PluginRoot
-
-	c.destDir = config.Local.Dest
 
 	c.baseUrl = config.Registry.BaseUrl
 

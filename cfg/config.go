@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -29,47 +28,21 @@ type (
 			// Registry API listen on different localhost ports.
 			AuthBaseUrl string `mapstructure:"auth_base_url"`
 		} `mapstructure:"registry"`
-
-		Local struct {
-			// ProjectPath is the root directory under which this CLI
-			// places its Claude Code skills-directory plugin, at
-			// <ProjectPath>/.claude/skills/jarvis-registry/. Optional;
-			// when unset, defaults to the user's home directory
-			// (personal scope, loads in every project). Set it to a
-			// repository root for a project-scope plugin instead.
-			ProjectPath string `mapstructure:"project_path"`
-
-			// PluginRoot is <ProjectPath>/.claude/skills/jarvis-registry/,
-			// derived by Load. Not read from config.yaml.
-			PluginRoot string `mapstructure:"-"`
-
-			// Dest is <PluginRoot>/skills/, the folder sync-skills
-			// reconciles Registry skills into. Derived by Load. Not
-			// read from config.yaml.
-			Dest string `mapstructure:"-"`
-		} `mapstructure:"local"`
 	}
 )
 
 // RegistryDirName is the name of the per-user directory, under the user's
 // home directory, that holds the CLI's config file and its advisory sync
 // locks (see skills.acquireLock). The sync manifest itself lives inside
-// the plugin root (Config.Local.PluginRoot), not here.
+// the plugin root that skills.SyncCommand derives from its ProjectPath
+// argument, not here.
 const RegistryDirName = ".jarvis-registry"
 
-// homeTokenPattern matches literal $HOME / $USERPROFILE references, in either
-// "$NAME", "${NAME}", or Windows "%NAME%" form. Matching is intentionally not
-// tied to runtime.GOOS: a config file should resolve the same way regardless
-// of which OS happens to be running it.
-var homeTokenPattern = regexp.MustCompile(`\$(?:HOME|USERPROFILE)\b|\$\{(?:HOME|USERPROFILE)\}|%USERPROFILE%`)
-
 // Load reads config.yaml (or config.yml) from registryDir, unmarshals it
-// into a Config, and validates and resolves its fields — expanding
-// Local.ProjectPath to an absolute path and deriving Local.PluginRoot and
-// Local.Dest from it, normalizing Registry.BaseUrl, and defaulting
-// Registry.AuthBaseUrl to Registry.BaseUrl when it isn't set. It returns an
-// error if neither file exists, the file cannot be parsed, or validation
-// fails.
+// into a Config, and validates and resolves its fields — normalizing
+// Registry.BaseUrl and defaulting Registry.AuthBaseUrl to Registry.BaseUrl
+// when it isn't set. It returns an error if neither file exists, the file
+// cannot be parsed, or validation fails.
 func Load(registryDir string) (config Config, err error) {
 	v := viper.New()
 
@@ -93,13 +66,6 @@ func Load(registryDir string) (config Config, err error) {
 		return config, fmt.Errorf("failed to parse config file at %s: %s", path, err.Error())
 	}
 
-	if config.Local.ProjectPath, err = resolveProjectPath(config.Local.ProjectPath); err != nil {
-		return config, fmt.Errorf("invalid local.project_path in %s: %s", path, err.Error())
-	}
-
-	config.Local.PluginRoot = filepath.Join(config.Local.ProjectPath, ".claude", "skills", "jarvis-registry")
-	config.Local.Dest = filepath.Join(config.Local.PluginRoot, "skills")
-
 	config.Registry.BaseUrl = strings.TrimSuffix(config.Registry.BaseUrl, "/")
 
 	if err = validateBaseUrl(config.Registry.BaseUrl); err != nil {
@@ -115,45 +81,6 @@ func Load(registryDir string) (config Config, err error) {
 	}
 
 	return config, nil
-}
-
-// resolveProjectPath expands a leading "~" and any literal $HOME /
-// $USERPROFILE reference in dest to the current user's home directory,
-// then validates that the result is an unambiguous, absolute location.
-// An empty dest defaults to the home directory, so the plugin loads in
-// personal scope by default.
-func resolveProjectPath(dest string) (string, error) {
-	dest = strings.TrimSpace(dest)
-
-	if strings.ContainsRune(dest, 0) {
-		return "", errors.New("path must not contain a NUL byte")
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("could not locate user home directory: %s", err.Error())
-	}
-
-	switch {
-	case dest == "":
-		dest = home
-	case dest == "~":
-		dest = home
-	case strings.HasPrefix(dest, "~/"), strings.HasPrefix(dest, `~\`):
-		dest = filepath.Join(home, dest[2:])
-	case strings.HasPrefix(dest, "~"):
-		return "", errors.New(`"~user" home directories are not supported, only "~" for the current user`)
-	}
-
-	dest = homeTokenPattern.ReplaceAllLiteralString(dest, home)
-
-	dest = filepath.Clean(dest)
-
-	if !filepath.IsAbs(dest) {
-		return "", fmt.Errorf("path %q must be absolute, or start with \"~\", \"$HOME\", or \"%%USERPROFILE%%\"", dest)
-	}
-
-	return dest, nil
 }
 
 // validateBaseUrl requires raw to be a well-formed URL with an https scheme

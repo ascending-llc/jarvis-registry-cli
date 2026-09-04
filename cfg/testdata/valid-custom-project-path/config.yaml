@@ -1,5 +1,0 @@
-local:
-  project_path: "~/some-project"
-
-registry:
-  base_url: "https://example.com"
