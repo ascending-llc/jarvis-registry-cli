@@ -1,0 +1,5 @@
+{
+  "name": "jarvis-registry",
+  "description": "Jarvis Registry companion plugin for Claude Code",
+  "author": { "name": "ASCENDING Inc." }
+}

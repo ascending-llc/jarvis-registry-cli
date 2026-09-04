@@ -2,4 +2,4 @@ local:
   project_path: "~/jarvis-registry-cli-test-dest"
 
 registry:
-  base_url: "http://localhost:8080/"
+  base_url: "https://example.com/"

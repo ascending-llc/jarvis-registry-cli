@@ -12,7 +12,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -85,12 +87,15 @@ func TestSyncCommandAfterApply(t *testing.T) {
 			err := cmd.BeforeReset()
 			require.NoError(t, err, "should be able to call SyncCommand.BeforeReset without error")
 
+			pluginRoot := t.TempDir()
+
 			cmd.configLoadFunc = func(string) (cfg.Config, error) {
 				var config cfg.Config
 
 				config.Registry.BaseUrl = c.baseUrl
 				config.Registry.AuthBaseUrl = c.authBaseUrl
-				config.Local.Dest = t.TempDir()
+				config.Local.PluginRoot = pluginRoot
+				config.Local.Dest = filepath.Join(pluginRoot, "skills")
 
 				return config, nil
 			}
@@ -100,6 +105,7 @@ func TestSyncCommandAfterApply(t *testing.T) {
 
 			assert.Equal(t, c.baseUrl, cmd.baseUrl, "baseUrl should be taken from config.Registry.BaseUrl")
 			assert.Equal(t, c.wantAuthBaseUrl, cmd.authBaseUrl, "authBaseUrl should be taken from config.Registry.AuthBaseUrl, distinct from baseUrl when cfg.Load resolved it that way")
+			assert.Equal(t, pluginRoot, cmd.pluginRoot, "pluginRoot should be taken from config.Local.PluginRoot")
 
 			require.NotNil(t, cmd.tp, "tp should be initialized")
 		})
@@ -169,13 +175,15 @@ func TestSyncCommandRun(t *testing.T) {
 	defer ts.Close()
 
 	t.Run("sync from non-trivial initial state", func(t *testing.T) {
-		cmd, mockSkillsDir, registryDir := newTestSyncSetup(t, ts)
+		cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
+
+		bootstrapPluginRoot(t, cmd.pluginRoot, mockSkillsDir)
 
 		initialManifest, err := os.ReadFile(filepath.Join("testdata", "initial-state.skill-lock.json"))
 		require.NoError(t, err, "should be able to read the initial-state skill-lock.json fixture")
 
-		err = os.WriteFile(filepath.Join(registryDir, manifestFileName), initialManifest, 0444)
-		require.NoError(t, err, "should be able to write the initial manifest file to the mocked registry directory")
+		err = os.WriteFile(filepath.Join(cmd.pluginRoot, manifestFileName), initialManifest, 0644)
+		require.NoError(t, err, "should be able to write the initial manifest file to the mocked plugin root")
 
 		err = os.CopyFS(mockSkillsDir, os.DirFS(filepath.Join("testdata", "initial-state")))
 		require.NoError(t, err, "should be able to copy the initial-state fixture directory tree to the mocked skills directory")
@@ -187,9 +195,9 @@ func TestSyncCommandRun(t *testing.T) {
 		err = cmd.Run()
 		assertPartialFailure(t, err)
 
-		assertSyncResult(t, mockSkillsDir, registryDir)
+		assertSyncResult(t, mockSkillsDir, cmd.pluginRoot)
 
-		assert.NotContains(t, buf.String(), "First time skill sync", "no banner should print when destDir already existed")
+		assert.NotContains(t, buf.String(), "First time skill sync", "no banner should print when the plugin was already bootstrapped")
 
 		rows := parseMarkdownSummaryRows(t, buf.String())
 
@@ -234,7 +242,9 @@ func TestSyncCommandRun(t *testing.T) {
 	})
 
 	t.Run("sync from empty initial state", func(t *testing.T) {
-		cmd, mockSkillsDir, registryDir := newTestSyncSetup(t, ts)
+		cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
+
+		bootstrapPluginRoot(t, cmd.pluginRoot, mockSkillsDir)
 
 		var buf bytes.Buffer
 
@@ -243,9 +253,9 @@ func TestSyncCommandRun(t *testing.T) {
 		err := cmd.Run()
 		assertPartialFailure(t, err)
 
-		assertSyncResult(t, mockSkillsDir, registryDir)
+		assertSyncResult(t, mockSkillsDir, cmd.pluginRoot)
 
-		assert.NotContains(t, buf.String(), "First time skill sync", "no banner should print when destDir already existed")
+		assert.NotContains(t, buf.String(), "First time skill sync", "no banner should print when the plugin was already bootstrapped")
 
 		rows := parseMarkdownSummaryRows(t, buf.String())
 
@@ -406,53 +416,208 @@ func newSingleSkillTestServer(t *testing.T, id, name string, remoteVersion int, 
 }
 
 // writeSingleSkillManifest writes a manifest file recording exactly one
-// skill (id, name, localVersion) to registryDir.
-func writeSingleSkillManifest(t *testing.T, registryDir, id, name string, localVersion int) {
+// skill (id, name, localVersion), with a valid CLI-owned managedBy
+// marker so ensurePluginRootConsent proceeds silently, to pluginRoot,
+// creating pluginRoot first if necessary.
+func writeSingleSkillManifest(t *testing.T, pluginRoot, id, name string, localVersion int) {
 	t.Helper()
 
 	manifest := ManifestV1{
-		SchemaVersion: manifestSchemaVersion,
-		Description:   manifestDescription,
-		Skills:        []Metadata{{Id: id, Name: name, Version: localVersion}},
+		SchemaVersion:     manifestSchemaVersion,
+		Description:       manifestDescription,
+		ManagedBy:         managedByValue,
+		SyncSkillsVersion: syncSkillsVersion,
+		Skills:            []Metadata{{Id: id, Name: name, Version: localVersion}},
 	}
 
 	body, err := json.Marshal(manifest)
 	require.NoError(t, err, "should be able to marshal the single-skill manifest fixture")
 
-	err = os.WriteFile(filepath.Join(registryDir, manifestFileName), body, 0444)
+	err = os.MkdirAll(pluginRoot, 0755)
+	require.NoError(t, err, "should be able to create the mocked plugin root")
+
+	err = os.WriteFile(filepath.Join(pluginRoot, manifestFileName), body, 0444)
 	require.NoError(t, err, "should be able to write the single-skill manifest fixture")
+}
+
+// bootstrapPluginRoot seeds pluginRoot and destDir as though a prior
+// sync-skills run had already bootstrapped them: a plugin.json matching
+// the CLI's current embedded content (so Run's first-time banner does
+// not fire), and a minimal skill-lock.json carrying the CLI's managedBy
+// marker and current syncSkillsVersion, with no skills recorded, so
+// ensurePluginRootConsent proceeds silently. Callers that need specific
+// local skills recorded overwrite the manifest file afterward — as long
+// as their fixture also carries the managedBy marker.
+func bootstrapPluginRoot(t *testing.T, pluginRoot, destDir string) {
+	t.Helper()
+
+	pluginManifestDir := filepath.Join(pluginRoot, ".claude-plugin")
+
+	err := os.MkdirAll(pluginManifestDir, 0755)
+	require.NoError(t, err, "should be able to create the mocked .claude-plugin directory")
+
+	err = os.WriteFile(filepath.Join(pluginManifestDir, "plugin.json"), pluginManifestContent, 0644)
+	require.NoError(t, err, "should be able to write the mocked plugin.json")
+
+	err = os.MkdirAll(destDir, 0755)
+	require.NoError(t, err, "should be able to create the mocked skills directory")
+
+	manifest := ManifestV1{
+		SchemaVersion:     manifestSchemaVersion,
+		Description:       manifestDescription,
+		ManagedBy:         managedByValue,
+		SyncSkillsVersion: syncSkillsVersion,
+	}
+
+	body, err := json.Marshal(manifest)
+	require.NoError(t, err, "should be able to marshal the mocked bootstrap manifest")
+
+	err = os.WriteFile(filepath.Join(pluginRoot, manifestFileName), body, 0644)
+	require.NoError(t, err, "should be able to write the mocked bootstrap manifest")
 }
 
 // TestSyncCommandRunFirstTimeBanner covers the first-time-sync banner:
 // present, followed by a blank line and the summary table, only on the
-// run where destDir did not already exist; absent on every later run.
+// run where .claude-plugin/plugin.json did not already exist; absent on
+// every later run.
 func TestSyncCommandRunFirstTimeBanner(t *testing.T) {
 	ts, _ := newSingleSkillTestServer(t, "banner-1", "test-skill", 1, Content{Description: "a test skill", Body: "Some body.\n"}, false)
 
-	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
-
-	destDir := filepath.Join(mockSkillsDir, "not-yet-created")
-	cmd.destDir = destDir
+	cmd, _, _ := newTestSyncSetup(t, ts)
 
 	var buf bytes.Buffer
 
 	cmd.logger = log.New(&buf, "", 0)
 
 	err := cmd.Run()
-	require.NoError(t, err, "Run should succeed creating destDir for the first time")
+	require.NoError(t, err, "Run should succeed bootstrapping the plugin root for the first time")
 
 	lines := strings.Split(buf.String(), "\n")
 	require.GreaterOrEqual(t, len(lines), 3, "output should contain at least the banner sentence, a blank line, and the table header")
-	assert.Equal(t, fmt.Sprintf("First time skill sync. The %s directory is created.", destDir), lines[0], "the first line should be the first-time banner")
+	assert.Equal(t, fmt.Sprintf("First time skill sync. The %s plugin is created.", cmd.pluginRoot), lines[0], "the first line should be the first-time banner")
 	assert.Empty(t, lines[1], "a blank line should follow the banner")
 	assert.Contains(t, lines[2], "Skill", "the summary table header should follow the blank line")
 
 	buf.Reset()
 
 	err = cmd.Run()
-	require.NoError(t, err, "Run should succeed again now that destDir exists")
+	require.NoError(t, err, "Run should succeed again now that the plugin root exists")
 
-	assert.NotContains(t, buf.String(), "First time skill sync", "the banner should not print once destDir already exists")
+	assert.NotContains(t, buf.String(), "First time skill sync", "the banner should not print once plugin.json already exists and matches")
+}
+
+// TestSyncCommandRunSyncSkillsWrapperStableAcrossRuns is a risk
+// mitigation test (see cc-plugin-integration.md's Risk section): running
+// Run twice in a row must leave skills/sync-skills/SKILL.md present and
+// byte-identical to the CLI's embedded content after both runs — proving
+// cleanDestDir's reserved-name exemption and the reconcile-before-clean
+// ordering in Run never let the wrapper be deleted.
+func TestSyncCommandRunSyncSkillsWrapperStableAcrossRuns(t *testing.T) {
+	ts, _ := newSingleSkillTestServer(t, "wrapper-stable-1", "test-skill", 1, Content{Description: "a test skill", Body: "Some body.\n"}, false)
+
+	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
+
+	wrapperPath := filepath.Join(mockSkillsDir, reservedSyncSkillsName, "SKILL.md")
+
+	err := cmd.Run()
+	require.NoError(t, err, "the first Run should succeed")
+
+	firstContent, err := os.ReadFile(wrapperPath)
+	require.NoError(t, err, "the sync-skills wrapper should exist after the first Run")
+	assert.Equal(t, string(syncSkillsSkillContent), string(firstContent), "the wrapper's content should match the CLI's embedded content after the first Run")
+
+	err = cmd.Run()
+	require.NoError(t, err, "the second Run should succeed")
+
+	secondContent, err := os.ReadFile(wrapperPath)
+	require.NoError(t, err, "the sync-skills wrapper should still exist after the second Run")
+	assert.Equal(t, string(syncSkillsSkillContent), string(secondContent), "the wrapper's content should still match the CLI's embedded content after the second Run")
+}
+
+// TestSyncCommandRunRewritesStaleSyncSkillsWrapper is the other risk
+// mitigation test: a skill-lock.json recording a stale syncSkillsVersion
+// must cause the wrapper to be rewritten to the current embedded
+// content, without ever being observed missing (cleanDestDir's exemption
+// runs before the rewrite, not after a delete).
+func TestSyncCommandRunRewritesStaleSyncSkillsWrapper(t *testing.T) {
+	ts, _ := newSingleSkillTestServer(t, "wrapper-stale-1", "test-skill", 1, Content{Description: "a test skill", Body: "Some body.\n"}, false)
+
+	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
+
+	bootstrapPluginRoot(t, cmd.pluginRoot, mockSkillsDir)
+
+	wrapperDir := filepath.Join(mockSkillsDir, reservedSyncSkillsName)
+	wrapperPath := filepath.Join(wrapperDir, "SKILL.md")
+
+	const staleContent = "stale wrapper content from an older CLI version"
+
+	require.NoError(t, os.MkdirAll(wrapperDir, 0755), "should be able to create the mocked sync-skills wrapper directory")
+	require.NoError(t, os.WriteFile(wrapperPath, []byte(staleContent), 0644), "should be able to write the stale wrapper content fixture")
+
+	manifest := ManifestV1{SchemaVersion: manifestSchemaVersion, Description: manifestDescription, ManagedBy: managedByValue, SyncSkillsVersion: syncSkillsVersion - 1}
+
+	body, err := json.Marshal(manifest)
+	require.NoError(t, err, "should be able to marshal the stale-version manifest fixture")
+
+	require.NoError(t, os.WriteFile(filepath.Join(cmd.pluginRoot, manifestFileName), body, 0644), "should be able to write the stale-version manifest fixture")
+
+	err = cmd.Run()
+	require.NoError(t, err, "Run should succeed rewriting the stale wrapper")
+
+	rewritten, err := os.ReadFile(wrapperPath)
+	require.NoError(t, err, "the sync-skills wrapper should still exist after Run rewrites it")
+	assert.Equal(t, string(syncSkillsSkillContent), string(rewritten), "the stale wrapper content should have been rewritten to the CLI's current embedded content")
+
+	actualManifestBytes, err := os.ReadFile(filepath.Join(cmd.pluginRoot, manifestFileName))
+	require.NoError(t, err, "should be able to read skill-lock.json after Run")
+
+	var actualManifest ManifestV1
+
+	require.NoError(t, json.Unmarshal(actualManifestBytes, &actualManifest), "should be able to unmarshal skill-lock.json after Run")
+	assert.Equal(t, syncSkillsVersion, actualManifest.SyncSkillsVersion, "skill-lock.json should record the current syncSkillsVersion after Run rewrites the wrapper")
+}
+
+// TestSyncCommandRunLockContention covers the advisory lock end-to-end
+// through Run itself: a second Run against the same plugin root while
+// the first is still in flight must fail fast with an actionable
+// message, rather than race the first Run's filesystem writes.
+func TestSyncCommandRunLockContention(t *testing.T) {
+	listReached := make(chan struct{})
+	release := make(chan struct{})
+
+	var closeOnce sync.Once
+
+	mux := http.NewServeMux()
+
+	mux.Handle(fmt.Sprintf("GET %s/api/v1/skills", registryBasePath), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		closeOnce.Do(func() { close(listReached) })
+
+		<-release
+
+		_, err := w.Write([]byte(`{"skills":[]}`))
+		require.NoError(t, err, "should be able to return the mock empty list_skills response")
+	}))
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	cmd, _, _ := newTestSyncSetup(t, ts)
+
+	cmd2 := cmd
+
+	errCh := make(chan error, 1)
+
+	go func() { errCh <- cmd.Run() }()
+
+	<-listReached
+
+	err := cmd2.Run()
+	require.Error(t, err, "a concurrent Run against the same plugin root should fail while the first Run is in flight")
+	assert.Contains(t, err.Error(), "already in progress", "the error should explain that a sync is already in progress")
+
+	close(release)
+
+	require.NoError(t, <-errCh, "the first Run should still succeed once unblocked")
 }
 
 // TestSyncCommandRunRecreatesMissingFolder covers the case where a
@@ -465,9 +630,9 @@ func TestSyncCommandRunRecreatesMissingFolder(t *testing.T) {
 
 	ts, contentRequested := newSingleSkillTestServer(t, "recreate-1", "test-skill", 1, content, false)
 
-	cmd, mockSkillsDir, registryDir := newTestSyncSetup(t, ts)
+	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
 
-	writeSingleSkillManifest(t, registryDir, "recreate-1", "test-skill", 1)
+	writeSingleSkillManifest(t, cmd.pluginRoot, "recreate-1", "test-skill", 1)
 
 	// mockSkillsDir/test-skill is deliberately never created, simulating a
 	// folder deleted by hand between runs.
@@ -499,9 +664,9 @@ func TestSyncCommandRunLeavesUnchangedSkillUntouched(t *testing.T) {
 	// get_skill_content for this unchanged skill.
 	ts, contentRequested := newSingleSkillTestServer(t, "unchanged-1", "test-skill", 1, Content{}, true)
 
-	cmd, mockSkillsDir, registryDir := newTestSyncSetup(t, ts)
+	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
 
-	writeSingleSkillManifest(t, registryDir, "unchanged-1", "test-skill", 1)
+	writeSingleSkillManifest(t, cmd.pluginRoot, "unchanged-1", "test-skill", 1)
 
 	err := os.MkdirAll(filepath.Join(mockSkillsDir, "test-skill"), 0755)
 	require.NoError(t, err, "should be able to create the pre-existing skill folder")
@@ -535,9 +700,9 @@ func TestSyncCommandRunLeavesUnchangedSkillUntouched(t *testing.T) {
 func TestSyncCommandRunFailedUpdateLeavesOldFolderIntact(t *testing.T) {
 	ts, _ := newSingleSkillTestServer(t, "fail-1", "test-skill", 2, Content{}, true)
 
-	cmd, mockSkillsDir, registryDir := newTestSyncSetup(t, ts)
+	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
 
-	writeSingleSkillManifest(t, registryDir, "fail-1", "test-skill", 1)
+	writeSingleSkillManifest(t, cmd.pluginRoot, "fail-1", "test-skill", 1)
 
 	err := os.MkdirAll(filepath.Join(mockSkillsDir, "test-skill"), 0755)
 	require.NoError(t, err, "should be able to create the pre-existing skill folder")
@@ -574,9 +739,9 @@ func TestSyncCommandRunFailedUpdateLeavesOldFolderIntact(t *testing.T) {
 func TestSyncCommandRunFailedUpdateOnAlreadyMissingFolder(t *testing.T) {
 	ts, _ := newSingleSkillTestServer(t, "fail-missing-1", "test-skill", 1, Content{}, true)
 
-	cmd, mockSkillsDir, registryDir := newTestSyncSetup(t, ts)
+	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
 
-	writeSingleSkillManifest(t, registryDir, "fail-missing-1", "test-skill", 1)
+	writeSingleSkillManifest(t, cmd.pluginRoot, "fail-missing-1", "test-skill", 1)
 
 	// mockSkillsDir/test-skill is deliberately never created.
 
@@ -619,9 +784,7 @@ func TestSyncCommandRunRejectsUnsafeSkillName(t *testing.T) {
 	require.Error(t, err, "Run should reject a remote skill name that is unsafe to use as a filesystem path")
 	assert.Contains(t, err.Error(), "unsafe to use as a filesystem path", "error should explain why Run failed")
 
-	entries, err := os.ReadDir(mockSkillsDir)
-	require.NoError(t, err, "should be able to list the mocked skills directory after the rejected sync")
-	assert.Empty(t, entries, "no skill folder should have been created for the unsafe skill name")
+	assertOnlyReservedSkillFolderExists(t, mockSkillsDir)
 }
 
 // TestSyncCommandRunRejectsSkillNameWithPipe covers the other half of
@@ -646,9 +809,64 @@ func TestSyncCommandRunRejectsSkillNameWithPipe(t *testing.T) {
 	require.Error(t, err, "Run should reject a remote skill name containing a pipe character")
 	assert.Contains(t, err.Error(), "unsafe to use as a filesystem path", "error should explain why Run failed")
 
-	entries, err := os.ReadDir(mockSkillsDir)
+	assertOnlyReservedSkillFolderExists(t, mockSkillsDir)
+}
+
+// TestSyncCommandRunRejectsReservedSkillName covers the case where a
+// Registry account has a skill named (case-insensitively) the same as
+// this CLI's own reserved wrapper skill: Run must reject it up front,
+// before any filesystem write, rather than let it collide with
+// skills/sync-skills/.
+func TestSyncCommandRunRejectsReservedSkillName(t *testing.T) {
+	cases := []string{"sync-skills", "Sync-Skills", "SYNC-SKILLS"}
+
+	for _, remoteName := range cases {
+		t.Run(remoteName, func(t *testing.T) {
+			mux := http.NewServeMux()
+
+			mux.Handle(fmt.Sprintf("GET %s/api/v1/skills", registryBasePath), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := json.Marshal(ListResponse{Skills: []Metadata{{Id: "reserved-1", Name: remoteName, Version: 1}}})
+				require.NoError(t, err, "should be able to marshal the mock list_skills response")
+
+				_, err = w.Write(body)
+				require.NoError(t, err, "should be able to return the mock list_skills response")
+			}))
+
+			ts := httptest.NewServer(mux)
+			defer ts.Close()
+
+			cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
+
+			err := cmd.Run()
+			require.Error(t, err, "Run should reject a remote skill name reserved for the CLI's own wrapper skill")
+			assert.Contains(t, err.Error(), "reserved for this CLI's own wrapper skill", "error should explain why Run failed")
+
+			entries, err := os.ReadDir(filepath.Join(mockSkillsDir, reservedSyncSkillsName))
+			require.NoError(t, err, "should be able to list the CLI-owned sync-skills wrapper folder after the rejected sync")
+			require.Len(t, entries, 1, "the CLI-owned sync-skills wrapper folder should contain only its own SKILL.md")
+			assert.Equal(t, "SKILL.md", entries[0].Name(), "the CLI-owned sync-skills wrapper folder should be untouched by the rejected sync")
+		})
+	}
+}
+
+// assertOnlyReservedSkillFolderExists asserts that destDir contains
+// nothing but the CLI-owned reservedSyncSkillsName folder — used by
+// tests that expect Run to reject a remote skill before any Registry
+// skill folder is created, while still allowing for the wrapper skill
+// Run reconciles earlier in the same call.
+func assertOnlyReservedSkillFolderExists(t *testing.T, destDir string) {
+	t.Helper()
+
+	entries, err := os.ReadDir(destDir)
 	require.NoError(t, err, "should be able to list the mocked skills directory after the rejected sync")
-	assert.Empty(t, entries, "no skill folder should have been created for the unsafe skill name")
+
+	var names []string
+
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+
+	assert.Equal(t, []string{reservedSyncSkillsName}, names, "no skill folder other than the CLI-owned sync-skills wrapper should have been created for the rejected sync")
 }
 
 // TestSyncCommandRunEscapesPipeInSummaryNotes covers a Failed row whose
@@ -677,9 +895,9 @@ func TestSyncCommandRunEscapesPipeInSummaryNotes(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	cmd, _, registryDir := newTestSyncSetup(t, ts)
+	cmd, _, _ := newTestSyncSetup(t, ts)
 
-	writeSingleSkillManifest(t, registryDir, "pipe-note-1", "test-skill", 1)
+	writeSingleSkillManifest(t, cmd.pluginRoot, "pipe-note-1", "test-skill", 1)
 
 	var buf bytes.Buffer
 
@@ -695,14 +913,24 @@ func TestSyncCommandRunEscapesPipeInSummaryNotes(t *testing.T) {
 	assert.Contains(t, failedRow[4], failureBody, "the Failed row's Notes cell must still parse back to the full, unescaped error message")
 }
 
+// newTestSyncSetup wires up a SyncCommand against a mocked Registry
+// server, a mocked user home directory, and a plugin root/skills
+// destination that do not exist on disk yet — exercising Run's own
+// bootstrap path by default, the same as a real first-ever invocation.
+// Tests that need a pre-existing installation set that up explicitly
+// (see bootstrapPluginRoot and writeSingleSkillManifest).
 func newTestSyncSetup(t *testing.T, ts *httptest.Server) (cmd SyncCommand, mockSkillsDir, registryDir string) {
 	t.Helper()
 
 	mockHomeDir, err := os.MkdirTemp("", "mock-user-home-dir")
 	require.NoError(t, err, "should be able to create temp directory as the mocked user home directory")
 
-	mockSkillsDir, err = os.MkdirTemp("", "mock-skills-dir")
-	require.NoError(t, err, "should be able to create temp directory as the mocked skills directory")
+	mockPluginRoot, err := os.MkdirTemp("", "mock-plugin-root")
+	require.NoError(t, err, "should be able to create temp directory as the mocked plugin root")
+
+	require.NoError(t, os.RemoveAll(mockPluginRoot), "should be able to remove the mocked plugin root so Run can bootstrap it from scratch")
+
+	mockSkillsDir = filepath.Join(mockPluginRoot, "skills")
 
 	originalHome := os.Getenv("HOME")
 	originalUserProfile := os.Getenv("USERPROFILE")
@@ -716,7 +944,7 @@ func newTestSyncSetup(t *testing.T, ts *httptest.Server) (cmd SyncCommand, mockS
 	t.Cleanup(func() {
 		_ = os.RemoveAll(mockHomeDir)
 
-		_ = os.RemoveAll(mockSkillsDir)
+		_ = os.RemoveAll(mockPluginRoot)
 
 		_ = os.Setenv("HOME", originalHome)
 
@@ -734,6 +962,8 @@ func newTestSyncSetup(t *testing.T, ts *httptest.Server) (cmd SyncCommand, mockS
 		config.Registry.BaseUrl = ts.URL
 
 		config.Registry.AuthBaseUrl = ts.URL
+
+		config.Local.PluginRoot = mockPluginRoot
 
 		config.Local.Dest = mockSkillsDir
 
@@ -766,7 +996,7 @@ func assertPartialFailure(t *testing.T, err error) {
 	assert.Contains(t, err.Error(), "resolved description is empty", "the returned error should explain why rendering failed")
 }
 
-func assertSyncResult(t *testing.T, mockSkillsDir, registryDir string) {
+func assertSyncResult(t *testing.T, mockSkillsDir, pluginRoot string) {
 	t.Helper()
 
 	mockSkillsEntries, err := os.ReadDir(mockSkillsDir)
@@ -785,7 +1015,12 @@ func assertSyncResult(t *testing.T, mockSkillsDir, registryDir string) {
 		}
 	}
 
-	assert.Len(t, mockSkillsEntries, len(expectedSkillNames), "mockSkillsDir should contain exactly as many skill folders as skills/testdata/server-response has subfolders")
+	// the CLI-owned sync-skills wrapper is always present alongside
+	// whatever Registry skills were synced, and is never tracked in
+	// skills/testdata/server-response.
+	expectedSkillNames = append(expectedSkillNames, reservedSyncSkillsName)
+
+	assert.Len(t, mockSkillsEntries, len(expectedSkillNames), "mockSkillsDir should contain exactly as many entries as skills/testdata/server-response has subfolders, plus the CLI-owned sync-skills wrapper")
 
 	var actualSkillNames []string
 
@@ -793,19 +1028,38 @@ func assertSyncResult(t *testing.T, mockSkillsDir, registryDir string) {
 		actualSkillNames = append(actualSkillNames, e.Name())
 	}
 
-	assert.ElementsMatch(t, expectedSkillNames, actualSkillNames, "mockSkillsDir should contain folders with the same names as the subfolders of skills/testdata/server-response")
+	assert.ElementsMatch(t, expectedSkillNames, actualSkillNames, "mockSkillsDir should contain folders with the same names as the subfolders of skills/testdata/server-response, plus sync-skills")
 
 	for _, name := range expectedSkillNames {
+		if name == reservedSyncSkillsName {
+			continue
+		}
+
 		assertSkillFolderMatches(t, filepath.Join(serverResponseDir, name), filepath.Join(mockSkillsDir, name))
 	}
 
-	actualManifestBytes, err := os.ReadFile(filepath.Join(registryDir, manifestFileName))
+	wrapperContent, err := os.ReadFile(filepath.Join(mockSkillsDir, reservedSyncSkillsName, "SKILL.md"))
+	require.NoError(t, err, "the sync-skills wrapper's SKILL.md should exist after sync")
+	assert.Equal(t, string(syncSkillsSkillContent), string(wrapperContent), "the sync-skills wrapper's SKILL.md should match the CLI's embedded content")
+
+	actualManifestBytes, err := os.ReadFile(filepath.Join(pluginRoot, manifestFileName))
 	require.NoError(t, err, "should be able to read the skill-lock.json file after sync")
 
 	var actualManifest ManifestV1
 
 	err = json.Unmarshal(actualManifestBytes, &actualManifest)
 	require.NoError(t, err, "should be able to unmarshal the skill-lock.json file after sync")
+
+	assert.Equal(t, managedByValue, actualManifest.ManagedBy, "skill-lock.json should record managedBy after a successful sync")
+	assert.Equal(t, syncSkillsVersion, actualManifest.SyncSkillsVersion, "skill-lock.json should record the current syncSkillsVersion after a successful sync")
+	assert.False(t, actualManifest.LastSyncedAt.IsZero(), "skill-lock.json should record a non-zero lastSyncedAt after a successful sync")
+
+	// zeroed out before the fixture comparison below, since these three
+	// fields are asserted individually above and final-state.skill-lock.json
+	// carries their zero values.
+	actualManifest.ManagedBy = ""
+	actualManifest.SyncSkillsVersion = 0
+	actualManifest.LastSyncedAt = time.Time{}
 
 	expectedManifestBytes, err := os.ReadFile(filepath.Join("testdata", "final-state.skill-lock.json"))
 	require.NoError(t, err, "should be able to read the final-state skill-lock.json fixture")

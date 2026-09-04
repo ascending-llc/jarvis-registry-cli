@@ -1,5 +1,7 @@
 {
   "description": "Manifest file for Jarvis Registry skill sync-down.",
+  "managedBy": "jarvis-registry-cli",
+  "syncSkillsVersion": 1,
   "skills": [
     {
       "id": "6a1367200d32ee7200500001",

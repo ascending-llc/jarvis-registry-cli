@@ -115,16 +115,26 @@ linters:
           - gosec
         # skill-lock.json holds only skill id/name/version metadata, no secrets; 0644/0444 is intentional so it stays world-readable but toggled read-only
         text: 'G302: Expect file permissions to be 0600 or less'
-      - path: '^skills/(manifest|skills)\.go$'
+      - path: '^skills/(manifest|skills|pluginfiles)\.go$'
         linters:
           - gosec
-        # manifest and synced SKILL.md files hold no secrets; world-readability is intended
+        # manifest, synced SKILL.md, and CLI-owned plugin.json/wrapper SKILL.md files hold no secrets; world-readability is intended
         text: 'G306: Expect WriteFile permissions to be 0600 or less'
-      - path: '^skills/skills\.go$'
+      - path: '^skills/(skills|pluginfiles|lock)\.go$'
         linters:
           - gosec
-        # synced skills folder holds only downloaded SKILL.md docs, no secrets
+        # synced skills folder, .claude-plugin/ directory, and the advisory locks directory hold no secrets
         text: 'G301: Expect directory permissions to be 0750 or less'
+      - path: '^skills/(pluginfiles|lock)\.go$'
+        linters:
+          - gosec
+        # paths are built from package constants and the configured pluginRoot/registryDir (or a SHA-256 hash of it), not from untrusted external input
+        text: 'G304: Potential file inclusion via variable'
+      - path: '^skills/lock\.go$'
+        linters:
+          - gosec
+        # the lock file holds only a pid and a timestamp, no secrets; world-readability is intentional
+        text: 'G302: Expect file permissions to be 0600 or less'
       - path: '^skills/skills_test\.go$'
         linters:
           - gosec
@@ -135,10 +145,10 @@ linters:
           - gosec
         # mocked registry directory under a temp test home dir, not a real deployment path
         text: 'G301: Expect directory permissions to be 0750 or less'
-      - path: '^skills/skills_test\.go$'
+      - path: '^skills/(skills|consent|lock|manifest)_test\.go$'
         linters:
           - gosec
-        # manifest fixture written to a temp test dir; 0444 mirrors the production read-only permissions and holds no secrets
+        # fixture files written to a temp test dir, holding no secrets; some mirror production's read-only permissions, others are plain 0644 test fixtures
         text: 'G306: Expect WriteFile permissions to be 0600 or less'
       - path: '^skills/skills_test\.go$'
         linters:

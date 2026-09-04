@@ -1,5 +1,5 @@
 local:
-  destination_folder: "~otheruser/dest"
+  project_path: "~otheruser/dest"
 
 registry:
   base_url: "https://example.com"
