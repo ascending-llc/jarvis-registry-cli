@@ -12,7 +12,9 @@ Command structs use `github.com/alecthomas/kong`, which drives them through a th
 
 `skills.SyncCommand` is the reference implementation. Fields that need to be swapped out in tests (e.g. `configLoadFunc`, `tp`) — inject them as interface-typed or func-typed struct fields, not package-level vars.
 
-To add a new subcommand: define a command type (e.g. `mypkg.MyCommand`) implementing the phases above, then register it as a new field with a `cmd:"" name:"<subcommand-name>"` kong tag on the `cli` struct in `cmd/jarvis-registry/main.go`.
+To add a new subcommand: define a command type (e.g. `mypkg.MyCommand`) implementing the phases above, then register it as a new field with a `cmd:"" name:"<subcommand-name>"` kong tag on the `cli` struct in `cmd/jarvis-registry/main.go`. To group it under an existing family of related subcommands instead (e.g. `auth login` / `auth status`), nest it as a field on that family's own struct (see `Auth` in `main.go`) rather than adding a flat top-level command.
+
+Any change to the CLI surface (new/renamed/removed subcommand or flag) has no generator keeping the three completion scripts under `./completions/` (`jarvis-registry.bash`, `.zsh`, `.fish`) in sync — as part of the same change, edit them directly to match, since they hard-code command and flag names. Similarly, `skills/pluginfiles.go` embeds `skills/embedded/sync-skills-SKILL.md` and `plugin.json` into the binary; whenever `sync-skills-SKILL.md` changes, also bump the `syncSkillsVersion` constant in `pluginfiles.go` as part of that same change — it's the only signal that tells already-synced installations to pick up the new content, so a stale version number means the update silently never reaches existing users.
 
 ## Config and auth
 
