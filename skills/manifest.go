@@ -20,12 +20,20 @@ type (
 
 	// ManifestV1 is the on-disk schema of the sync manifest file.
 	ManifestV1 struct {
-		LastSyncedAt      time.Time  `json:"lastSyncedAt,omitzero"`
-		Description       string     `json:"description"`
-		ManagedBy         string     `json:"managedBy"`
-		Skills            []Metadata `json:"skills"`
-		SchemaVersion     int        `json:"schemaVersion"`
-		SyncSkillsVersion int        `json:"syncSkillsVersion"`
+		LastSyncedAt      time.Time       `json:"lastSyncedAt,omitzero"`
+		Description       string          `json:"description"`
+		ManagedBy         string          `json:"managedBy"`
+		Skills            []ManifestSkill `json:"skills"`
+		SchemaVersion     int             `json:"schemaVersion"`
+		SyncSkillsVersion int             `json:"syncSkillsVersion"`
+	}
+
+	// ManifestSkill records only the identity and version of a synced skill,
+	// independently of the metadata fields returned by the Registry API.
+	ManifestSkill struct {
+		Id      string `json:"id"`
+		Name    string `json:"name"`
+		Version int    `json:"version"`
 	}
 )
 
@@ -84,10 +92,18 @@ func (mrw ManifestReadWriter) ReadManifest() (ManifestV1, error) {
 // POSIX, since rename relinks a directory entry rather than opening the
 // target for writing.
 func (mrw ManifestReadWriter) WriteManifest(skills []Metadata, syncSkillsVersion int) error {
+	var entries []ManifestSkill
+	if skills != nil {
+		entries = make([]ManifestSkill, len(skills))
+		for i, s := range skills {
+			entries[i] = ManifestSkill{Id: s.Id, Name: s.Name, Version: s.Version}
+		}
+	}
+
 	m := ManifestV1{
 		SchemaVersion:     manifestSchemaVersion,
 		Description:       manifestDescription,
-		Skills:            skills,
+		Skills:            entries,
 		ManagedBy:         managedByValue,
 		LastSyncedAt:      time.Now().UTC(),
 		SyncSkillsVersion: syncSkillsVersion,

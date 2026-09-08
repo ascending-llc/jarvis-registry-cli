@@ -39,6 +39,20 @@
       "id": "6a1367200d32ee7200500010",
       "name": "malformed-skill-10",
       "version": 10
+    },
+    {
+      "id": "6a1367200d32ee7200500012",
+      "name": "multi-file-update-skill-12",
+      "version": 12,
+      "fileCount": 1,
+      "createdByRegistry": true
+    },
+    {
+      "id": "6a1367200d32ee7200500013",
+      "name": "chat-skill-13",
+      "version": 13,
+      "fileCount": 3,
+      "createdByRegistry": false
     }
   ]
 }

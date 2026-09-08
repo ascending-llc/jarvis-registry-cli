@@ -1,0 +1,17 @@
+{
+  "description": "A Registry-owned multi-file skill being updated.",
+  "body": "Updated body for the multi-file update scenario.\n",
+  "frontmatter": {},
+  "disableModelInvocation": false,
+  "userInvocable": false,
+  "allowedTools": null,
+  "files": [
+    {
+      "relativePath": "docs/usage.md",
+      "content": "# Usage\n\nCurrent usage docs.\n",
+      "isBinary": false,
+      "isExecutable": false,
+      "available": true
+    }
+  ]
+}
