@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -30,7 +31,7 @@ func TestManifestReadWriterWriteManifest(t *testing.T) {
 
 		got, err := mrw.ReadManifest()
 		require.NoError(t, err, "ReadManifest should be able to read back what WriteManifest wrote")
-		assert.Equal(t, skills, got.Skills, "ReadManifest should round-trip the skills WriteManifest wrote")
+		assert.Equal(t, []ManifestSkill{{Id: "id-1", Name: "skill-1", Version: 1}}, got.Skills, "ReadManifest should round-trip the identity and version WriteManifest wrote")
 		assert.Equal(t, managedByValue, got.ManagedBy, "WriteManifest should stamp ManagedBy with the CLI's marker value")
 		assert.Equal(t, syncSkillsVersion, got.SyncSkillsVersion, "WriteManifest should stamp the syncSkillsVersion it was given")
 		assert.False(t, got.LastSyncedAt.Before(before), "LastSyncedAt should be stamped at or after the call to WriteManifest")
@@ -94,6 +95,23 @@ func TestManifestReadWriterWriteManifest(t *testing.T) {
 		require.NoError(t, err, "should be able to list the registry directory after the failed rename")
 		assert.Len(t, entries, 1, "the failed rename's temp file should have been cleaned up")
 	})
+}
+
+func TestManifestOmitsRemoteMetadata(t *testing.T) {
+	dir := t.TempDir()
+	mrw := NewManifestReadWriter(dir)
+	err := mrw.WriteManifest([]Metadata{{Id: "id-1", Name: "skill-1", Version: 2, FileCount: 3, CreatedByRegistry: true}}, syncSkillsVersion)
+	require.NoError(t, err, "writing a skill with remote metadata should succeed")
+
+	body, err := os.ReadFile(filepath.Join(dir, manifestFileName))
+	require.NoError(t, err, "the written manifest should be readable")
+
+	var raw struct {
+		Skills []json.RawMessage `json:"skills"`
+	}
+	require.NoError(t, json.Unmarshal(body, &raw), "the manifest should be valid JSON")
+	require.Len(t, raw.Skills, 1, "the manifest should contain one skill")
+	assert.JSONEq(t, `{"id":"id-1","name":"skill-1","version":2}`, string(raw.Skills[0]), "persisted skills must contain only id, name and version")
 }
 
 func TestManifestReadWriterReadManifest(t *testing.T) {

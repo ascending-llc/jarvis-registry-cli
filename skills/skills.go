@@ -2,6 +2,7 @@ package skills
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -127,6 +128,13 @@ const (
 	statusUnchanged = "Unchanged"
 	statusRemoved   = "Removed"
 	statusFailed    = "Failed"
+	statusSkipped   = "Skipped"
+
+	// chatOwnedFilesSkippedNote is the Notes value for a Skipped summary
+	// row: a multi-file skill created in Jarvis Chat, whose supporting
+	// files are pointers into Chat's external storage adapter that Jarvis
+	// Registry cannot read, so the CLI cannot sync it.
+	chatOwnedFilesSkippedNote = "not synced: supporting files were created in Jarvis Chat and are not readable from Jarvis Registry"
 
 	// recreatedNote is the Notes value for an Updated summary row whose
 	// recorded LocalVersion and RemoteVersion already agreed — Changed is
@@ -246,7 +254,10 @@ func (c *SyncCommand) Run() (err error) {
 		return err
 	}
 
-	localSkills := manifest.Skills
+	localSkills := make([]Metadata, len(manifest.Skills))
+	for i, s := range manifest.Skills {
+		localSkills[i] = Metadata{Id: s.Id, Name: s.Name, Version: s.Version}
+	}
 
 	// reconcile the CLI-owned sync-skills wrapper skill
 	newSyncSkillsVersion, err := reconcileSyncSkillsWrapper(c.destDir, manifest.SyncSkillsVersion, c.stderrLogger)
@@ -279,8 +290,13 @@ func (c *SyncCommand) Run() (err error) {
 		}
 	}
 
+	// set aside multi-file skills created in Jarvis Chat, which cannot be
+	// synced (their supporting files are not readable from Registry); they
+	// are reported only via the summary's Skipped group.
+	eligibleSkills, skippedSkills := partitionSkippableSkills(remoteSkills)
+
 	// compare local and remote and categorize skills
-	toDelete, toUpdate, toCreate := c.getSyncSpecs(localSkills, remoteSkills)
+	toDelete, toUpdate, toCreate := c.getSyncSpecs(localSkills, eligibleSkills)
 
 	// MUST do delete->update->create sequentially. This is to avoid a remote skill's name colliding with a local skill's outdated name,
 	// because skill name is bound to a local folder name. Once toDelete are deleted and toUpdate get folder names updated to
@@ -303,7 +319,7 @@ func (c *SyncCommand) Run() (err error) {
 
 	updateOutcomes := c.boundedFanOut(toUpdate, c.stageOne)
 
-	if err = c.commitStaged(toUpdate); err != nil {
+	if err = c.commitStaged(updateOutcomes); err != nil {
 		return fmt.Errorf("failed to finalize updated skills: %s", err.Error())
 	}
 
@@ -317,9 +333,28 @@ func (c *SyncCommand) Run() (err error) {
 		return fmt.Errorf("failed to write manifest file after syncing: %s", err.Error())
 	}
 
-	c.printSummary(pluginJSONCreated, toCreate, createOutcomes, toUpdate, updateOutcomes, toDelete)
+	c.printSummary(pluginJSONCreated, toCreate, createOutcomes, toUpdate, updateOutcomes, toDelete, skippedSkills)
 
 	return errors.Join(joinErrors(updateOutcomes), joinErrors(createOutcomes))
+}
+
+// partitionSkippableSkills splits remote into skills this run will sync
+// (single-file, or multi-file and created by Registry) and skills it will
+// not (multi-file, created in Jarvis Chat — their supporting files are
+// pointers into Chat's external storage adapter, which Registry cannot
+// read). A skipped skill never reaches getSyncSpecs, so it can never
+// become a toCreate/toUpdate spec: it is reported only via the sync
+// summary's Skipped group.
+func partitionSkippableSkills(remote []Metadata) (eligible, skipped []Metadata) {
+	for _, m := range remote {
+		if m.FileCount > 0 && !m.CreatedByRegistry {
+			skipped = append(skipped, m)
+		} else {
+			eligible = append(eligible, m)
+		}
+	}
+
+	return eligible, skipped
 }
 
 // succeededOnly returns the Metadata of every outcome whose SyncFn call
@@ -362,6 +397,31 @@ func isSafeSkillName(name string) bool {
 	}
 
 	return !strings.ContainsAny(name, `/\|`)
+}
+
+// isSafeRelativeFilePath reports whether path is safe to join under a
+// skill's staged folder before writing a supporting file to it. Like
+// isSafeSkillName, this is defense-in-depth against a misbehaving or
+// compromised Registry response: filepath.Join only lexically normalizes
+// its arguments and does not confine the result to the staging folder, so
+// an absolute path or one that escapes via ".." must be rejected
+// explicitly, before any os.MkdirAll/os.WriteFile sees it. A backslash is
+// rejected outright so a Windows-style separator can never smuggle path
+// segments past the forward-slash-based cleaning below.
+func isSafeRelativeFilePath(path string) bool {
+	if path == "" || filepath.IsAbs(path) || strings.Contains(path, `\`) {
+		return false
+	}
+
+	for _, segment := range strings.Split(path, "/") {
+		if segment == ".." {
+			return false
+		}
+	}
+
+	cleaned := filepath.Clean(path)
+
+	return cleaned != "." && cleaned != ".." && !strings.HasPrefix(cleaned, ".."+string(filepath.Separator))
 }
 
 // guaranteeDestDir ensures c.destDir exists as a directory, creating it
@@ -475,6 +535,78 @@ func (c *SyncCommand) getSyncSpecs(local, remote []Metadata) (toDelete []SyncSpe
 	return toDelete, toUpdate, toCreate
 }
 
+// stageSkillContent validates every file in content.Files (availability
+// and relative-path safety) before writing anything, builds folder as a
+// brand-new directory, and writes SKILL.md plus every supporting file into
+// it. folder must not already exist. On failure, any directory created
+// here is removed; commitStaged also excludes failed outcomes so a cleanup
+// failure cannot publish partial content. The destination is never touched.
+func stageSkillContent(folder, remoteName string, remoteVersion int, content Content) (err error) {
+	for _, f := range content.Files {
+		if !f.Available {
+			return fmt.Errorf("supporting file %q for remote skill %s, version %d is not available: %s", f.RelativePath, remoteName, remoteVersion, f.UnavailableReason)
+		}
+
+		if !isSafeRelativeFilePath(f.RelativePath) {
+			return fmt.Errorf("supporting file %q for remote skill %s, version %d has an unsafe relative path", f.RelativePath, remoteName, remoteVersion)
+		}
+	}
+
+	rendered, err := renderSkillMarkdown(content, remoteName)
+	if err != nil {
+		return fmt.Errorf("failed to render SKILL.md for remote skill %s, version %d: %s", remoteName, remoteVersion, err.Error())
+	}
+
+	if err = os.Mkdir(folder, 0755); err != nil {
+		return fmt.Errorf("failed to stage folder for remote skill %s, version %d: %s", remoteName, remoteVersion, err.Error())
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(folder)
+		}
+	}()
+
+	if err = os.WriteFile(filepath.Join(folder, "SKILL.md"), []byte(rendered), 0644); err != nil {
+		return fmt.Errorf("failed to write SKILL.md file for remote skill %s, version %d: %s", remoteName, remoteVersion, err.Error())
+	}
+
+	for _, f := range content.Files {
+		target := filepath.Join(folder, filepath.FromSlash(f.RelativePath))
+
+		if err = os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return fmt.Errorf("failed to stage supporting file %q for remote skill %s, version %d: %s", f.RelativePath, remoteName, remoteVersion, err.Error())
+		}
+
+		mode := os.FileMode(0644)
+		if f.IsExecutable {
+			mode = 0755
+		}
+
+		// Registry sets exactly one of Content and Body on an available
+		// file: Content holds the file's text, Body holds base64-encoded
+		// bytes whenever the file could not be represented as UTF-8 text
+		// (a genuinely binary file, but also a file stored with
+		// IsBinary=false whose bytes still fail to decode as UTF-8 — see
+		// Registry's _sync_file_response/_registry_file_text). Keying the
+		// decode off Body's presence rather than the IsBinary flag alone
+		// therefore handles every case Registry emits; IsBinary is
+		// informational.
+		data := []byte(f.Content)
+
+		if f.Body != "" {
+			if data, err = base64.StdEncoding.DecodeString(f.Body); err != nil {
+				return fmt.Errorf("failed to decode supporting file %q for remote skill %s, version %d: %s", f.RelativePath, remoteName, remoteVersion, err.Error())
+			}
+		}
+
+		if err = os.WriteFile(target, data, mode); err != nil {
+			return fmt.Errorf("failed to write supporting file %q for remote skill %s, version %d: %s", f.RelativePath, remoteName, remoteVersion, err.Error())
+		}
+	}
+
+	return nil
+}
+
 // createOne fetches, renders, and stages a brand-new skill under
 // c.tempDir/RemoteName, moving it into destDir only as the last step —
 // mirroring stageOne's staging pattern — so a crash partway through never
@@ -489,17 +621,8 @@ func (c *SyncCommand) createOne(spec SyncSpec) SyncOutcome {
 		return SyncOutcome{Err: fmt.Errorf("failed to retrieve contents for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())}
 	}
 
-	rendered, err := renderSkillMarkdown(content, spec.RemoteName)
-	if err != nil {
-		return SyncOutcome{Err: fmt.Errorf("failed to render SKILL.md for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())}
-	}
-
-	if err = os.Mkdir(filepath.Join(c.tempDir, spec.RemoteName), 0755); err != nil {
-		return SyncOutcome{Err: fmt.Errorf("failed to stage folder for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())}
-	}
-
-	if err = os.WriteFile(filepath.Join(c.tempDir, spec.RemoteName, "SKILL.md"), []byte(rendered), 0644); err != nil {
-		return SyncOutcome{Err: fmt.Errorf("failed to write SKILL.md file for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())}
+	if err = stageSkillContent(filepath.Join(c.tempDir, spec.RemoteName), spec.RemoteName, spec.RemoteVersion, content); err != nil {
+		return SyncOutcome{Err: err}
 	}
 
 	if err = os.Rename(filepath.Join(c.tempDir, spec.RemoteName), filepath.Join(c.destDir, spec.RemoteName)); err != nil {
@@ -546,17 +669,8 @@ func (c *SyncCommand) stageOne(spec SyncSpec) SyncOutcome {
 		return SyncOutcome{Err: fmt.Errorf("failed to retrieve contents for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())}
 	}
 
-	rendered, err := renderSkillMarkdown(content, spec.RemoteName)
-	if err != nil {
-		return SyncOutcome{Err: fmt.Errorf("failed to render SKILL.md for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())}
-	}
-
-	if err = os.Mkdir(filepath.Join(c.tempDir, spec.RemoteName), 0755); err != nil {
-		return SyncOutcome{Err: fmt.Errorf("failed to stage folder for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())}
-	}
-
-	if err = os.WriteFile(filepath.Join(c.tempDir, spec.RemoteName, "SKILL.md"), []byte(rendered), 0644); err != nil {
-		return SyncOutcome{Err: fmt.Errorf("failed to write SKILL.md file for remote skill %s, version %d: %s", spec.RemoteName, spec.RemoteVersion, err.Error())}
+	if err = stageSkillContent(filepath.Join(c.tempDir, spec.RemoteName), spec.RemoteName, spec.RemoteVersion, content); err != nil {
+		return SyncOutcome{Err: err}
 	}
 
 	if err = atomicRemoveAll(filepath.Join(c.destDir, spec.LocalName)); err != nil {
@@ -566,23 +680,27 @@ func (c *SyncCommand) stageOne(spec SyncSpec) SyncOutcome {
 	return SyncOutcome{Metadata: Metadata{Id: spec.Id, Name: spec.RemoteName, Version: spec.RemoteVersion}, Changed: true}
 }
 
-// commitStaged moves every folder stageOne staged under c.tempDir into
-// destDir under its final RemoteName. Callers must run this only after
-// every stageOne call for specs has returned — including every
+// commitStaged moves only successfully changed outcomes from c.tempDir
+// into destDir. Callers must run this only after
+// every stageOne call has returned — including every
 // atomicRemoveAll of an outdated LocalName — so that no move performed
 // here can still be followed by a sibling spec's delete of that same
-// destination path. A spec that was a no-op in stageOne has nothing
-// staged and is skipped. Moving is a single same-filesystem os.Rename per
-// spec (see tempDirPattern), cheap enough that fanning it out
+// destination path. Failed and unchanged outcomes are skipped even if a
+// temporary folder exists. Moving is a single same-filesystem os.Rename per
+// outcome (see tempDirPattern), cheap enough that fanning it out
 // concurrently would not be worthwhile.
-func (c *SyncCommand) commitStaged(specs []SyncSpec) error {
-	errs := make([]error, 0, len(specs))
+func (c *SyncCommand) commitStaged(outcomes []SyncOutcome) error {
+	errs := make([]error, 0, len(outcomes))
 
-	for _, spec := range specs {
-		staged := filepath.Join(c.tempDir, spec.RemoteName)
+	for _, outcome := range outcomes {
+		if outcome.Err != nil || !outcome.Changed {
+			continue
+		}
 
-		if err := os.Rename(staged, filepath.Join(c.destDir, spec.RemoteName)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			errs = append(errs, fmt.Errorf("failed to move staged skill %s, version %d into place: %s", spec.RemoteName, spec.RemoteVersion, err.Error()))
+		staged := filepath.Join(c.tempDir, outcome.Metadata.Name)
+
+		if err := os.Rename(staged, filepath.Join(c.destDir, outcome.Metadata.Name)); err != nil {
+			errs = append(errs, fmt.Errorf("failed to move staged skill %s, version %d into place: %s", outcome.Metadata.Name, outcome.Metadata.Version, err.Error()))
 		}
 	}
 
@@ -633,13 +751,13 @@ func (c *SyncCommand) deleteMany(specs []SyncSpec) error {
 // .claude-plugin/plugin.json is the one condition Claude Code's docs
 // confirm needs a new session, decoupled from whether c.destDir itself
 // happened to already exist) followed by the sync summary table.
-func (c *SyncCommand) printSummary(pluginJSONCreated bool, toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec) {
+func (c *SyncCommand) printSummary(pluginJSONCreated bool, toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec, skipped []Metadata) {
 	if pluginJSONCreated {
 		c.logger.Printf("First time skill sync. The %s plugin is created.", c.pluginRoot)
 		c.logger.Println()
 	}
 
-	rows := c.buildSummaryRows(toCreate, createOutcomes, toUpdate, updateOutcomes, toDelete)
+	rows := c.buildSummaryRows(toCreate, createOutcomes, toUpdate, updateOutcomes, toDelete, skipped)
 
 	var buf bytes.Buffer
 
@@ -655,11 +773,11 @@ func (c *SyncCommand) printSummary(pluginJSONCreated bool, toCreate []SyncSpec, 
 }
 
 // buildSummaryRows builds the sync summary table's rows: one per spec in
-// toCreate, toUpdate, and toDelete, grouped by status in the order
-// Created, Updated, Unchanged, Removed, Failed, and sorted alphabetically
-// by skill name within each group.
-func (c *SyncCommand) buildSummaryRows(toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec) [][]string {
-	var created, updated, unchanged, removed, failed []summaryRow
+// toCreate, toUpdate, and toDelete plus one per skipped skill, grouped by
+// status in the order Created, Updated, Unchanged, Removed, Failed,
+// Skipped, and sorted alphabetically by skill name within each group.
+func (c *SyncCommand) buildSummaryRows(toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec, skipped []Metadata) [][]string {
+	var created, updated, unchanged, removed, failed, skippedRows []summaryRow
 
 	for i, spec := range toCreate {
 		if outcome := createOutcomes[i]; outcome.Err == nil {
@@ -689,9 +807,13 @@ func (c *SyncCommand) buildSummaryRows(toCreate []SyncSpec, createOutcomes []Syn
 		removed = append(removed, summaryRow{Skill: spec.LocalName, Status: statusRemoved, Previous: strconv.Itoa(spec.LocalVersion), Current: "-"})
 	}
 
-	groups := [][]summaryRow{created, updated, unchanged, removed, failed}
+	for _, m := range skipped {
+		skippedRows = append(skippedRows, summaryRow{Skill: m.Name, Status: statusSkipped, Previous: "-", Current: strconv.Itoa(m.Version), Notes: chatOwnedFilesSkippedNote})
+	}
 
-	rows := make([][]string, 0, len(toCreate)+len(toUpdate)+len(toDelete))
+	groups := [][]summaryRow{created, updated, unchanged, removed, failed, skippedRows}
+
+	rows := make([][]string, 0, len(toCreate)+len(toUpdate)+len(toDelete)+len(skipped))
 
 	for _, group := range groups {
 		sort.Slice(group, func(i, j int) bool { return group[i].Skill < group[j].Skill })
