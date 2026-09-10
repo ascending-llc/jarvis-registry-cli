@@ -26,6 +26,7 @@ _jarvis-registry() {
     local -a commands
     commands=(
         'auth:Manage Registry authentication.'
+        'configure:Interactively configure the CLI, e.g. the Registry base URL.'
         'sync-skills:Sync skills against Jarvis Registry service.'
     )
 

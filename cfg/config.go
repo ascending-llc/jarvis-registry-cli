@@ -46,14 +46,9 @@ const RegistryDirName = ".jarvis-registry"
 func Load(registryDir string) (config Config, err error) {
 	v := viper.New()
 
-	path := filepath.Join(registryDir, "config.yaml")
-
-	if _, err = os.Stat(path); errors.Is(err, fs.ErrNotExist) {
-		path = filepath.Join(registryDir, "config.yml")
-
-		if _, err = os.Stat(path); errors.Is(err, fs.ErrNotExist) {
-			return Config{}, fmt.Errorf("neither config.yaml nor config.yml exists in the %s folder", registryDir)
-		}
+	path, existed, resolveErr := resolveConfigPath(registryDir)
+	if resolveErr == nil && !existed {
+		return Config{}, fmt.Errorf("neither config.yaml nor config.yml exists in the %s folder", registryDir)
 	}
 
 	v.SetConfigFile(path)
@@ -81,6 +76,29 @@ func Load(registryDir string) (config Config, err error) {
 	}
 
 	return config, nil
+}
+
+// resolveConfigPath returns the existing config.yaml or config.yml path in
+// registryDir, preferring config.yaml. When neither exists, it returns the
+// prospective config.yaml path with existed set to false.
+func resolveConfigPath(registryDir string) (path string, existed bool, err error) {
+	path = filepath.Join(registryDir, "config.yaml")
+
+	if _, err = os.Stat(path); err == nil {
+		return path, true, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return path, false, err
+	}
+
+	ymlPath := filepath.Join(registryDir, "config.yml")
+
+	if _, err = os.Stat(ymlPath); err == nil {
+		return ymlPath, true, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return ymlPath, false, err
+	}
+
+	return path, false, nil
 }
 
 // validateBaseUrl requires raw to be a well-formed URL with an https scheme
