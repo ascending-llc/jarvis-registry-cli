@@ -2,9 +2,13 @@ complete -c jarvis-registry -f
 
 # Root command: subcommands and global flags.
 complete -c jarvis-registry -n '__fish_use_subcommand' -a auth -d 'Manage Registry authentication.'
+complete -c jarvis-registry -n '__fish_use_subcommand' -a configure -d 'Interactively configure the CLI, e.g. the Registry base URL.'
 complete -c jarvis-registry -n '__fish_use_subcommand' -a sync-skills -d 'Sync skills against Jarvis Registry service.'
 complete -c jarvis-registry -n '__fish_use_subcommand' -s v -l version -d 'Print version and exit.'
 complete -c jarvis-registry -n '__fish_use_subcommand' -s h -l help -d 'Show context-sensitive help.'
+
+# configure subcommand: help.
+complete -c jarvis-registry -n '__fish_seen_subcommand_from configure' -s h -l help -d 'Show context-sensitive help.'
 
 # auth subcommand: login/status and help.
 complete -c jarvis-registry -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from login status' -a login -d 'Log in to the Registry.'

@@ -1,6 +1,7 @@
 package cfg
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -30,6 +31,24 @@ func TestLoadValid(t *testing.T) {
 			assert.Equal(t, c.wantAuthBaseUrl, config.Registry.AuthBaseUrl, "auth_base_url should default to base_url when unset, or be preserved (trimmed) when set explicitly")
 		})
 	}
+}
+
+func TestLoadMissingConfig(t *testing.T) {
+	registryDir := t.TempDir()
+
+	_, err := Load(registryDir)
+	require.Error(t, err)
+	assert.Equal(t, "neither config.yaml nor config.yml exists in the "+registryDir+" folder", err.Error())
+}
+
+func TestLoadPreservesReadErrorBehavior(t *testing.T) {
+	registryDir := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(registryDir, []byte("not a directory"), 0600))
+
+	_, err := Load(registryDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read config file at "+filepath.Join(registryDir, "config.yaml"))
+	assert.NotContains(t, err.Error(), "failed to resolve config file")
 }
 
 func TestLoadInvalid(t *testing.T) {

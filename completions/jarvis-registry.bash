@@ -4,7 +4,7 @@ _jarvis_registry_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
-        COMPREPLY=( $(compgen -W "-v --version -h --help auth sync-skills" -- "$cur") )
+        COMPREPLY=( $(compgen -W "-v --version -h --help auth configure sync-skills" -- "$cur") )
         return 0
     fi
 
@@ -15,6 +15,9 @@ _jarvis_registry_complete() {
             else
                 COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
             fi
+            ;;
+        configure)
+            COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
             ;;
         sync-skills)
             case "$cur" in

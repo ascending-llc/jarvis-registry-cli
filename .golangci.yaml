@@ -190,9 +190,29 @@ linters:
           - gosec
         # a directory pre-created at the manifest path, inside a t.TempDir(), to force WriteManifest's rename step to fail; not a real deployment path
         text: 'G301: Expect directory permissions to be 0750 or less'
+      - path: '^cfg/configure_readwriter\.go$'
+        linters:
+          - gosec
+        # the path is resolved from the Registry config directory plus one of the fixed config.yaml/config.yml filenames, not from untrusted input
+        text: 'G304: Potential file inclusion via variable'
+      - path: '^cfg/configure_readwriter\.go$'
+        linters:
+          - gosec
+        # the per-user Registry config directory is intentionally user-accessible and contains no secrets; the specification requires mode 0755
+        text: 'G301: Expect directory permissions to be 0750 or less'
+      - path: '^cfg/configure(_readwriter)?_test\.go$'
+        linters:
+          - gosec
+        # paths are built from t.TempDir() plus fixed Registry config directory and filename constants, not from untrusted input
+        text: 'G304: Potential file inclusion via variable'
+      - path: '^cfg/configure_test\.go$'
+        linters:
+          - gosec
+        # directories are created only inside t.TempDir() and intentionally mirror the production config directory permissions
+        text: 'G301: Expect directory permissions to be 0750 or less'
 
 issues:
-  max-issues-per-linter: 0      
+  max-issues-per-linter: 0
   max-same-issues: 0
 formatters:
   enable:
@@ -204,4 +224,3 @@ formatters:
         - standard
         - default
         - localmodule
-    

@@ -16,6 +16,11 @@ _jarvis-registry_auth() {
     fi
 }
 
+_jarvis-registry_configure() {
+    _arguments \
+        '(-h --help)'{-h,--help}'[Show context-sensitive help.]'
+}
+
 _jarvis-registry_sync-skills() {
     _arguments \
         '(-h --help)'{-h,--help}'[Show context-sensitive help.]' \
@@ -26,6 +31,7 @@ _jarvis-registry() {
     local -a commands
     commands=(
         'auth:Manage Registry authentication.'
+        'configure:Interactively configure the CLI, e.g. the Registry base URL.'
         'sync-skills:Sync skills against Jarvis Registry service.'
     )
 
@@ -43,6 +49,7 @@ _jarvis-registry() {
         args)
             case $words[1] in
                 auth) _jarvis-registry_auth ;;
+                configure) _jarvis-registry_configure ;;
                 sync-skills) _jarvis-registry_sync-skills ;;
             esac
             ;;
