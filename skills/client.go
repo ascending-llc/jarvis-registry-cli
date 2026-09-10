@@ -26,6 +26,33 @@ type (
 		Id      string `json:"id"`
 		Name    string `json:"name"`
 		Version int    `json:"version"`
+
+		// FileCount is the number of supporting files the skill has
+		// beyond its SKILL.md. CreatedByRegistry reports whether the
+		// skill was created by Jarvis Registry itself (as opposed to
+		// Jarvis Chat); together they decide whether sync-skills can read
+		// the skill's supporting files (see partitionSkippableSkills).
+		FileCount         int  `json:"fileCount"`
+		CreatedByRegistry bool `json:"createdByRegistry"`
+	}
+
+	// ContentFile is one supporting file returned inside a
+	// get-skill-content response, mirroring the subset of the API's
+	// SkillFileResponse the CLI needs to write the file to disk. For an
+	// available file the Registry populates exactly one of Content and
+	// Body: Content holds the file's UTF-8 text, and Body holds
+	// base64-encoded bytes whenever the file could not be represented as
+	// text (a binary file, or one whose bytes fail to decode as UTF-8).
+	// IsBinary is informational only — see stageSkillContent, which keys
+	// its decode off Body's presence.
+	ContentFile struct {
+		RelativePath      string `json:"relativePath"`
+		Content           string `json:"content"`
+		Body              string `json:"body"`
+		UnavailableReason string `json:"unavailableReason"`
+		IsBinary          bool   `json:"isBinary"`
+		IsExecutable      bool   `json:"isExecutable"`
+		Available         bool   `json:"available"`
 	}
 
 	// ListResponse is the decoded response body of a list-skills request.
@@ -51,6 +78,10 @@ type (
 		// tell "not specified, fall back to frontmatter" apart from an
 		// explicit empty list.
 		AllowedTools []string `json:"allowedTools"`
+
+		// Files carries every supporting file beyond SKILL.md. It is empty
+		// for a single-SKILL.md skill.
+		Files []ContentFile `json:"files"`
 	}
 )
 
@@ -86,7 +117,6 @@ func (c Client) newListSkillsRequest() (*http.Request, error) {
 	}
 
 	q := url.Values{}
-	q.Set("fileCount", "0")
 	q.Set("enabled", "true")
 
 	u.RawQuery = q.Encode()

@@ -8,3 +8,7 @@
 /config.yml
 /coverage.out
 /.working-docs
+bin/*
+
+.idea/
+.vscode/

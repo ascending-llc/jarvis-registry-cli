@@ -2,6 +2,7 @@ package skills
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -54,6 +55,33 @@ func TestIsSafeSkillName(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			assert.Equal(t, c.safe, isSafeSkillName(c.name), "isSafeSkillName(%q) mismatch", c.name)
+		})
+	}
+}
+
+func TestIsSafeRelativeFilePath(t *testing.T) {
+	cases := []struct {
+		path string
+		safe bool
+	}{
+		{path: "helper.txt", safe: true},
+		{path: "reference/notes.md", safe: true},
+		{path: "a/b/c/deep.txt", safe: true},
+		{path: "", safe: false},
+		{path: ".", safe: false},
+		{path: "..", safe: false},
+		{path: "../evil", safe: false},
+		{path: "../../etc/cron.d/evil", safe: false},
+		{path: "/etc/passwd", safe: false},
+		{path: `nested\path`, safe: false},
+		{path: "nested/../../escape", safe: false},
+		{path: "docs/../helper.txt", safe: false},
+		{path: "docs/..", safe: false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.path, func(t *testing.T) {
+			assert.Equal(t, c.safe, isSafeRelativeFilePath(c.path), "isSafeRelativeFilePath(%q) mismatch", c.path)
 		})
 	}
 }
@@ -124,6 +152,15 @@ func TestSyncCommandRun(t *testing.T) {
 	var content []byte
 
 	for _, meta := range remoteSKills.Skills {
+		// A multi-file skill created in Jarvis Chat is skipped entirely by
+		// Run (partitionSkippableSkills), so no get_skill_content fixture
+		// exists for it and its id is deliberately absent from
+		// skillContentRespMap — a /content request for it would fail the
+		// require.True below, asserting Run never issues one.
+		if meta.FileCount > 0 && !meta.CreatedByRegistry {
+			continue
+		}
+
 		content, err = os.ReadFile(filepath.Join("testdata", "server-response", meta.Name+".content.json"))
 		require.NoError(t, err, fmt.Sprintf("should be able to read the mock get_skill_content fixture for skill %s", meta.Name))
 
@@ -148,7 +185,7 @@ func TestSyncCommandRun(t *testing.T) {
 
 		require.Equal(t, fmt.Sprintf("Bearer %s", mockBearerToken), r.Header.Get("Authorization"), "should request list_skills with the mocked bearer token")
 
-		require.Equal(t, "0", r.URL.Query().Get("fileCount"), "should request list_skills with fileCount=0")
+		require.False(t, r.URL.Query().Has("fileCount"), "should no longer send a fileCount query parameter, so multi-file skills are not filtered out")
 		require.Equal(t, "true", r.URL.Query().Get("enabled"), "should request list_skills with enabled=true")
 
 		_, err := w.Write(listSkillsRespBody)
@@ -205,9 +242,11 @@ func TestSyncCommandRun(t *testing.T) {
 		assertSummaryRow(t, rows, "swap-skill-beta", statusUpdated, "1", "2", "renamed from swap-skill-alpha")
 		assertSummaryRow(t, rows, "to-update-skill-4", statusUpdated, "3", "4", "")
 		assertSummaryRow(t, rows, "accidentally-deleted-skill-5", statusUpdated, "5", "5", "renamed from accidentally-delete-skill-5")
+		assertSummaryRow(t, rows, "multi-file-update-skill-12", statusUpdated, "3", "12", "")
 		assertSummaryRow(t, rows, "no-update-skill-1", statusUnchanged, "1", "1", "")
 		assertSummaryRow(t, rows, "not-in-remote-skill-2", statusRemoved, "2", "-", "")
 		assertSummaryRow(t, rows, "not-in-remote-and-name-collide-skill-3", statusRemoved, "3", "-", "")
+		assertSummaryRow(t, rows, "chat-skill-13", statusSkipped, "-", "13", chatOwnedFilesSkippedNote)
 
 		failedRow := findSummaryRow(t, rows, "malformed-skill-10", statusFailed)
 		assert.Equal(t, "-", failedRow[2], "a failed create's Previous Version should be '-'")
@@ -221,6 +260,7 @@ func TestSyncCommandRun(t *testing.T) {
 			{"not-in-remote-and-name-collide-skill-3", statusCreated},
 			{"to-create-skill-7", statusCreated},
 			{"accidentally-deleted-skill-5", statusUpdated},
+			{"multi-file-update-skill-12", statusUpdated},
 			{"swap-skill-alpha", statusUpdated},
 			{"swap-skill-beta", statusUpdated},
 			{"to-update-skill-4", statusUpdated},
@@ -228,6 +268,7 @@ func TestSyncCommandRun(t *testing.T) {
 			{"not-in-remote-and-name-collide-skill-3", statusRemoved},
 			{"not-in-remote-skill-2", statusRemoved},
 			{"malformed-skill-10", statusFailed},
+			{"chat-skill-13", statusSkipped},
 		}
 
 		var gotOrder [][2]string
@@ -257,10 +298,12 @@ func TestSyncCommandRun(t *testing.T) {
 
 		rows := parseMarkdownSummaryRows(t, buf.String())
 
-		for _, name := range []string{"no-update-skill-1", "to-update-skill-4", "accidentally-deleted-skill-5", "not-in-remote-and-name-collide-skill-3", "to-create-skill-7", "swap-skill-alpha", "swap-skill-beta"} {
+		for _, name := range []string{"no-update-skill-1", "to-update-skill-4", "accidentally-deleted-skill-5", "not-in-remote-and-name-collide-skill-3", "to-create-skill-7", "swap-skill-alpha", "swap-skill-beta", "multi-file-update-skill-12"} {
 			row := findSummaryRow(t, rows, name, statusCreated)
 			assert.Equal(t, "-", row[2], "skill %s: a Created row's Previous Version should be '-'", name)
 		}
+
+		assertSummaryRow(t, rows, "chat-skill-13", statusSkipped, "-", "13", chatOwnedFilesSkippedNote)
 
 		failedRow := findSummaryRow(t, rows, "malformed-skill-10", statusFailed)
 		assert.Contains(t, failedRow[4], "resolved description is empty", "the Failed row's Notes should carry the underlying error message")
@@ -373,12 +416,26 @@ func assertSummaryRow(t *testing.T, rows [][]string, skill, status, previous, cu
 func newSingleSkillTestServer(t *testing.T, id, name string, remoteVersion int, content Content, failContent bool) (ts *httptest.Server, contentRequested *bool) {
 	t.Helper()
 
+	return newSingleSkillTestServerFromMetadata(t, Metadata{Id: id, Name: name, Version: remoteVersion}, content, failContent)
+}
+
+// newSingleSkillTestServerFromMetadata is the general form of
+// newSingleSkillTestServer: its list_skills response names exactly the
+// single skill described by meta — including its FileCount and
+// CreatedByRegistry, so callers can exercise the multi-file and
+// skip-partitioning paths — and its get_skill_content response for meta.Id
+// either succeeds with content (failContent false) or responds with a
+// forced 500 (failContent true). The returned pointer reports whether
+// get_skill_content was ever requested.
+func newSingleSkillTestServerFromMetadata(t *testing.T, meta Metadata, content Content, failContent bool) (ts *httptest.Server, contentRequested *bool) {
+	t.Helper()
+
 	requested := false
 
 	mux := http.NewServeMux()
 
 	mux.Handle(fmt.Sprintf("GET %s/api/v1/skills", registryBasePath), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := json.Marshal(ListResponse{Skills: []Metadata{{Id: id, Name: name, Version: remoteVersion}}})
+		body, err := json.Marshal(ListResponse{Skills: []Metadata{meta}})
 		require.NoError(t, err, "should be able to marshal the mock list_skills response")
 
 		_, err = w.Write(body)
@@ -397,8 +454,8 @@ func newSingleSkillTestServer(t *testing.T, id, name string, remoteVersion int, 
 			return
 		}
 
-		content.Id = id
-		content.Name = name
+		content.Id = meta.Id
+		content.Name = meta.Name
 
 		body, err := json.Marshal(content)
 		require.NoError(t, err, "should be able to marshal the mock get_skill_content response")
@@ -425,7 +482,7 @@ func writeSingleSkillManifest(t *testing.T, pluginRoot, id, name string, localVe
 		Description:       manifestDescription,
 		ManagedBy:         managedByValue,
 		SyncSkillsVersion: syncSkillsVersion,
-		Skills:            []Metadata{{Id: id, Name: name, Version: localVersion}},
+		Skills:            []ManifestSkill{{Id: id, Name: name, Version: localVersion}},
 	}
 
 	body, err := json.Marshal(manifest)
@@ -758,6 +815,67 @@ func TestSyncCommandRunFailedUpdateOnAlreadyMissingFolder(t *testing.T) {
 	failedRow := findSummaryRow(t, rows, "test-skill", statusFailed)
 	assert.Equal(t, "1", failedRow[2], "a failed update's Previous Version should be the recorded LocalVersion")
 	assert.Equal(t, "-", failedRow[3], "a failed update's Current Version should be '-' since nothing is present on disk")
+}
+
+// TestSyncCommandRunWritesSupportingFilesWithModes covers the create path
+// for a Registry-owned multi-file skill: every supporting file is written
+// under the skill folder (including one nested in a subdirectory), a
+// binary file is base64-decoded, an executable file gets mode 0755, and
+// every non-executable file (including SKILL.md) stays 0644.
+func TestSyncCommandRunWritesSupportingFilesWithModes(t *testing.T) {
+	binaryData := []byte{0x00, 0x01, 0x02, 0xff, 0xfe}
+
+	content := Content{
+		Description: "a multi-file skill",
+		Body:        "Some body.\n",
+		Files: []ContentFile{
+			{RelativePath: "helper.txt", Content: "top-level helper\n", Available: true},
+			{RelativePath: "reference/notes.md", Content: "# Notes\n", Available: true},
+			{RelativePath: "scripts/run.sh", Content: "#!/bin/sh\necho hi\n", IsExecutable: true, Available: true},
+			{RelativePath: "assets/logo.bin", Body: base64.StdEncoding.EncodeToString(binaryData), IsBinary: true, Available: true},
+			// Registry can hand back base64 in Body with IsBinary=false
+			// when a file's bytes are not valid UTF-8 (see
+			// _sync_file_response). The write must still decode Body.
+			{RelativePath: "assets/mislabeled.bin", Body: base64.StdEncoding.EncodeToString(binaryData), IsBinary: false, Available: true},
+		},
+	}
+
+	meta := Metadata{Id: "multi-1", Name: "multi-skill", Version: 1, FileCount: len(content.Files), CreatedByRegistry: true}
+
+	ts, _ := newSingleSkillTestServerFromMetadata(t, meta, content, false)
+
+	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
+
+	err := cmd.Run()
+	require.NoError(t, err, "Run should succeed creating a Registry-owned multi-file skill")
+
+	skillDir := filepath.Join(mockSkillsDir, "multi-skill")
+
+	helper, err := os.ReadFile(filepath.Join(skillDir, "helper.txt"))
+	require.NoError(t, err, "the top-level supporting file should have been written")
+	assert.Equal(t, "top-level helper\n", string(helper), "a non-binary file should be written verbatim")
+
+	notes, err := os.ReadFile(filepath.Join(skillDir, "reference", "notes.md"))
+	require.NoError(t, err, "the nested supporting file should have been written under its subdirectory")
+	assert.Equal(t, "# Notes\n", string(notes), "a nested non-binary file should be written verbatim")
+
+	logo, err := os.ReadFile(filepath.Join(skillDir, "assets", "logo.bin"))
+	require.NoError(t, err, "the binary supporting file should have been written")
+	assert.Equal(t, binaryData, logo, "a binary file should be base64-decoded before being written")
+
+	mislabeled, err := os.ReadFile(filepath.Join(skillDir, "assets", "mislabeled.bin"))
+	require.NoError(t, err, "the base64 supporting file with IsBinary=false should have been written")
+	assert.Equal(t, binaryData, mislabeled, "a file carrying base64 in Body must be decoded regardless of IsBinary")
+
+	for _, rel := range []string{"SKILL.md", "helper.txt", filepath.Join("reference", "notes.md"), filepath.Join("assets", "logo.bin")} {
+		info, statErr := os.Stat(filepath.Join(skillDir, rel))
+		require.NoError(t, statErr, "should be able to stat %s", rel)
+		assert.Equal(t, os.FileMode(0644), info.Mode().Perm(), "%s should be written with mode 0644", rel)
+	}
+
+	scriptInfo, err := os.Stat(filepath.Join(skillDir, "scripts", "run.sh"))
+	require.NoError(t, err, "the executable supporting file should have been written")
+	assert.Equal(t, os.FileMode(0755), scriptInfo.Mode().Perm(), "an executable supporting file should be written with mode 0755")
 }
 
 // TestSyncCommandRunRejectsUnsafeSkillName is a defense-in-depth check

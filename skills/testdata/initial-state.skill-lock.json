@@ -37,6 +37,11 @@
       "id": "6a1367200d32ee7200500009",
       "name": "swap-skill-beta",
       "version": 1
+    },
+    {
+      "id": "6a1367200d32ee7200500012",
+      "name": "multi-file-update-skill-12",
+      "version": 3
     }
   ],
   "schemaVersion": 1
