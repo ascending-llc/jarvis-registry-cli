@@ -16,6 +16,9 @@ _jarvis_registry_complete() {
                 COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
             fi
             ;;
+        configure)
+            COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+            ;;
         sync-skills)
             case "$cur" in
                 -*)
