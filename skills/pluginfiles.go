@@ -24,7 +24,7 @@ const (
 
 	// syncSkillsVersion is bumped by hand whenever any of the three
 	// embedded/sync-skills-*-SKILL.md files change.
-	syncSkillsVersion = 5
+	syncSkillsVersion = 6
 )
 
 var (
