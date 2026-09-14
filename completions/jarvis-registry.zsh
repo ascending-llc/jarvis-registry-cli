@@ -24,6 +24,7 @@ _jarvis-registry_configure() {
 _jarvis-registry_sync-skills() {
     _arguments \
         '(-h --help)'{-h,--help}'[Show context-sensitive help.]' \
+        '--mode[Skills sync mode.]:mode:(claude codex copilot)' \
         '1:project directory:_files -/'
 }
 

@@ -52,7 +52,7 @@ func TestSyncCommandRunIsolatesPartialSupportingFileFailure(t *testing.T) {
 				ts := httptest.NewServer(mux)
 				t.Cleanup(ts.Close)
 				cmd, dest, _ := newTestSyncSetup(t, ts)
-				writeSingleSkillManifest(t, cmd.pluginRoot, "old", "old-skill", 1)
+				writeSingleSkillManifest(t, cmd.syncRoot, "old", "old-skill", 1)
 
 				oldDir := filepath.Join(dest, "old-skill")
 				require.NoError(t, os.MkdirAll(oldDir, 0755), "the old skill folder should be created")
@@ -80,7 +80,7 @@ func TestSyncCommandRunIsolatesPartialSupportingFileFailure(t *testing.T) {
 				assert.NoDirExists(t, cmd.tempDir, "temporary content should be removed after Run")
 				assert.FileExists(t, filepath.Join(dest, "new-skill", "SKILL.md"), "an unrelated create should complete")
 
-				manifest, readErr := NewManifestReadWriter(cmd.pluginRoot).ReadManifest()
+				manifest, readErr := NewManifestReadWriter(cmd.syncRoot).ReadManifest()
 				require.NoError(t, readErr, "the updated manifest should be readable")
 				assert.Equal(t, []ManifestSkill{{Id: "new", Name: "new-skill", Version: 1}}, manifest.Skills, "the successful create should be recorded without the failed version")
 				rows := parseMarkdownSummaryRows(t, output.String())

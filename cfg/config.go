@@ -33,29 +33,66 @@ type (
 		// behavior, as opposed to anything about the Registry server itself.
 		Local struct {
 			// Skills holds settings specific to the sync-skills subcommand.
-			Skills struct {
+			Skills struct { //nolint:govet // fieldalignment: keep SkipIds and Mode in the order they were introduced, each with its own doc comment, rather than let the fixer collapse them into an undocumented, alignment-packed block — the two fields are both 8-byte-aligned (SkillsMode is a defined string type), so no padding is ever saved by reordering them.
 				// SkipIds lists skill Ids that sync-skills must never create,
 				// update, or keep synced locally, even when the caller has
 				// Registry access.
 				SkipIds []string `mapstructure:"skip_ids"`
+
+				// Mode selects the skills-directory convention sync-skills
+				// targets. Empty means unset — cfg.Load does not default it,
+				// so sync-skills can distinguish "never configured" from any
+				// of the three real modes and fail with an actionable message
+				// naming exactly what's missing.
+				Mode SkillsMode `mapstructure:"mode"`
 			} `mapstructure:"skills"`
 		} `mapstructure:"local"`
 	}
+
+	// SkillsMode selects which skills-directory convention sync-skills
+	// targets.
+	SkillsMode string
 )
 
-// RegistryDirName is the name of the per-user directory, under the user's
-// home directory, that holds the CLI's config file and its advisory sync
-// locks (see skills.acquireLock). The sync manifest itself lives inside
-// the plugin root that skills.SyncCommand derives from its ProjectPath
-// argument, not here.
-const RegistryDirName = ".jarvis-registry"
+const (
+	// SkillsModeClaude syncs into Claude Code's plugin-owned subtree at
+	// <ProjectPath>/.claude/skills/jarvis-registry/skills/.
+	SkillsModeClaude SkillsMode = "claude"
+
+	// SkillsModeCodex syncs into Codex's flat project-scope directory at
+	// <ProjectPath>/.agents/skills/.
+	SkillsModeCodex SkillsMode = "codex"
+
+	// SkillsModeCopilot syncs into GitHub Copilot's flat project-scope
+	// directory at <ProjectPath>/.github/skills/.
+	SkillsModeCopilot SkillsMode = "copilot"
+
+	// RegistryDirName is the name of the per-user directory, under the
+	// user's home directory, that holds the CLI's config file and its
+	// advisory sync locks (see skills.acquireLock). The sync manifest
+	// itself lives inside the sync root that skills.SyncCommand derives
+	// from its mode and ProjectPath, not here.
+	RegistryDirName = ".jarvis-registry"
+)
+
+// Valid reports whether m is one of the three recognized modes. The zero
+// value ("") is not valid — an unset mode is a distinct, caller-visible
+// state, not a fourth mode.
+func (m SkillsMode) Valid() bool {
+	switch m {
+	case SkillsModeClaude, SkillsModeCodex, SkillsModeCopilot:
+		return true
+	default:
+		return false
+	}
+}
 
 // Load reads config.yaml (or config.yml) from registryDir, unmarshals it
 // into a Config, and validates and resolves its fields — normalizing
-// Registry.BaseUrl and Local.Skills.SkipIds, and defaulting
-// Registry.AuthBaseUrl to Registry.BaseUrl when it isn't set. It returns an
-// error if neither file exists, the file cannot be parsed, or validation
-// fails.
+// Registry.BaseUrl and Local.Skills.SkipIds, defaulting Registry.AuthBaseUrl
+// to Registry.BaseUrl when it isn't set, and validating Local.Skills.Mode
+// when it's set. It returns an error if neither file exists, the file
+// cannot be parsed, or validation fails.
 func Load(registryDir string) (config Config, err error) {
 	v := viper.New()
 
@@ -91,6 +128,14 @@ func Load(registryDir string) (config Config, err error) {
 	config.Local.Skills.SkipIds, err = normalizeSkipIds(config.Local.Skills.SkipIds)
 	if err != nil {
 		return config, fmt.Errorf("invalid local.skills.skip_ids in %s: %s", path, err.Error())
+	}
+
+	// Validate the skills mode only when it's set: a config file predating
+	// this field (or one deliberately leaving it to be supplied via --mode)
+	// must still load. No default is applied — an absent mode stays absent
+	// and is handled by sync-skills's own fail-loud resolution.
+	if config.Local.Skills.Mode != "" && !config.Local.Skills.Mode.Valid() {
+		return config, fmt.Errorf("invalid local.skills.mode in %s: must be one of claude, codex, copilot, got %q", path, config.Local.Skills.Mode)
 	}
 
 	return config, nil

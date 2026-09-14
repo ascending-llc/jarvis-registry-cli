@@ -44,14 +44,20 @@ type (
 	// the local skills folder against the skills available to the
 	// caller on the Registry, creating, updating, and deleting local
 	// skill folders as needed.
-	SyncCommand struct { //nolint:govet // fieldalignment: keep the exported CLI argument first and related configuration fields together.
-		// ProjectPath is the directory the Claude Code skills-directory
-		// plugin is placed under, at <ProjectPath>/.claude/skills/jarvis-registry/.
-		// Optional; relative paths (including "." for the current
-		// directory) resolve against the current working directory.
-		// Defaults to the user's home directory (personal scope) when
-		// omitted.
-		ProjectPath string `arg:"" optional:"" help:"Directory the Claude Code skills-directory plugin is placed under, at <path>/.claude/skills/jarvis-registry/. Optional; relative paths (including \".\" for the current directory) resolve against the current working directory. Defaults to the user's home directory (personal scope) when omitted."`
+	SyncCommand struct { //nolint:govet // fieldalignment: keep the exported CLI arguments first and related configuration fields together.
+		// ProjectPath is the directory skills are synced under. For claude
+		// mode this is <ProjectPath>/.claude/skills/jarvis-registry/; for
+		// codex and copilot it is <ProjectPath>/.agents/skills/ and
+		// <ProjectPath>/.github/skills/ respectively. Optional for claude
+		// (defaults to the user's home directory, personal scope) but
+		// required for codex/copilot. Relative paths (including "." for the
+		// current directory) resolve against the current working directory.
+		ProjectPath string `arg:"" optional:"" help:"Directory skills are synced under. claude mode uses <path>/.claude/skills/jarvis-registry/ (optional, defaults to the user's home directory); codex uses <path>/.agents/skills/ and copilot <path>/.github/skills/ (required). Relative paths (including \".\") resolve against the current working directory."`
+
+		// Mode selects the skills-directory convention to target. It
+		// overrides local.skills.mode from config; one of the two must
+		// resolve to a value.
+		Mode string `optional:"" help:"Skills sync mode: claude, codex, or copilot. Overrides local.skills.mode from config; one of the two must resolve to a value."`
 
 		logger         Logger
 		stdin          io.Reader
@@ -67,8 +73,9 @@ type (
 		tempDir        string
 		userHomeDir    string
 		mrw            ManifestReadWriter
-		pluginRoot     string
+		syncRoot       string
 		registryDir    string
+		mode           cfg.SkillsMode
 	}
 
 	// SyncSpec describes one skill's local and remote state, as compared
@@ -175,26 +182,36 @@ func (c *SyncCommand) BeforeReset() (err error) {
 	return nil
 }
 
-// AfterApply derives SyncCommand's remaining dependencies: the registry
-// directory, plugin root and destination folder (resolved from
-// ProjectPath), the loaded config's Registry and auth-server base URLs,
-// and the token provider.
+// AfterApply derives SyncCommand's remaining dependencies. Config is
+// loaded first because the sync destination now depends on the resolved
+// mode (flag over config), and codex/copilot require a project directory
+// and refuse the personal-scope home root.
 func (c *SyncCommand) AfterApply() (err error) {
 	c.registryDir = filepath.Join(c.userHomeDir, cfg.RegistryDirName)
+
+	config, err := c.configLoadFunc(c.registryDir)
+	if err != nil {
+		return fmt.Errorf("failed to load config options: %s", err.Error())
+	}
+
+	if c.mode, err = resolveSkillsMode(c.Mode, config.Local.Skills.Mode); err != nil {
+		return err
+	}
+
+	if c.mode != cfg.SkillsModeClaude && strings.TrimSpace(c.ProjectPath) == "" {
+		return fmt.Errorf("a project directory is required in %s mode; pass one, e.g. `jarvis-registry sync-skills . --mode %s`", c.mode, c.mode)
+	}
 
 	resolvedProjectPath, err := resolveProjectPath(c.ProjectPath)
 	if err != nil {
 		return fmt.Errorf("invalid project path %q: %s", c.ProjectPath, err.Error())
 	}
 
-	c.pluginRoot = filepath.Join(resolvedProjectPath, ".claude", "skills", "jarvis-registry")
-
-	c.destDir = filepath.Join(c.pluginRoot, "skills")
-
-	config, err := c.configLoadFunc(c.registryDir)
-	if err != nil {
-		return fmt.Errorf("failed to load config options: %s", err.Error())
+	if c.mode != cfg.SkillsModeClaude && isHomeDir(resolvedProjectPath, c.userHomeDir) {
+		return fmt.Errorf("%s mode does not support syncing into the user's home directory (personal scope); pass a project directory", c.mode)
 	}
+
+	c.syncRoot, c.destDir = destinationsForMode(c.mode, resolvedProjectPath)
 
 	c.baseUrl = config.Registry.BaseUrl
 
@@ -205,6 +222,71 @@ func (c *SyncCommand) AfterApply() (err error) {
 	c.tp = auth.NewRegistryTokenResolver(c.authBaseUrl, auth.RegistryScopes, c.logger)
 
 	return nil
+}
+
+// resolveSkillsMode resolves the effective mode: flagValue (the --mode
+// flag) wins if non-empty and valid; otherwise configValue (already
+// validated by cfg.Load) is used. Neither present is a hard failure — mode
+// has no default.
+func resolveSkillsMode(flagValue string, configValue cfg.SkillsMode) (cfg.SkillsMode, error) {
+	if flagValue != "" {
+		mode := cfg.SkillsMode(flagValue)
+		if !mode.Valid() {
+			return "", fmt.Errorf("invalid --mode %q: must be one of claude, codex, copilot", flagValue)
+		}
+
+		return mode, nil
+	}
+
+	if configValue != "" {
+		return configValue, nil
+	}
+
+	return "", errors.New("no sync mode resolved: pass --mode, or set local.skills.mode via `jarvis-registry configure`")
+}
+
+// isHomeDir reports whether projectPath is the user's home directory. It
+// first compares the two lexically (Clean'd), which also covers a
+// projectPath that doesn't exist yet — such a path can't be home. It then
+// compares by file identity via os.SameFile (os.Stat follows symlinks), so a
+// symlink or other alternate path resolving to home can't slip the
+// personal-scope refusal that gates codex/copilot.
+func isHomeDir(projectPath, homeDir string) bool {
+	if filepath.Clean(projectPath) == filepath.Clean(homeDir) {
+		return true
+	}
+
+	projectInfo, projectErr := os.Stat(projectPath)
+	homeInfo, homeErr := os.Stat(homeDir)
+
+	return projectErr == nil && homeErr == nil && os.SameFile(projectInfo, homeInfo)
+}
+
+// destinationsForMode returns the directory that owns skill-lock.json and
+// gates consent/locking (syncRoot), and the directory skills are written
+// directly into (destDir), for mode under the resolved project path.
+// Claude mode keeps its plugin-owned subtree, where the two differ; codex
+// and copilot have no such subtree, so syncRoot and destDir are the same
+// flat, ecosystem-shared directory.
+func destinationsForMode(mode cfg.SkillsMode, projectPath string) (syncRoot, destDir string) {
+	switch mode {
+	case cfg.SkillsModeCodex:
+		d := filepath.Join(projectPath, ".agents", "skills")
+
+		return d, d
+	case cfg.SkillsModeCopilot:
+		d := filepath.Join(projectPath, ".github", "skills")
+
+		return d, d
+	case cfg.SkillsModeClaude:
+	}
+
+	// claude (and any unresolved value, though AfterApply guarantees a valid
+	// mode before this is called) uses the plugin-owned subtree, where
+	// syncRoot and destDir differ by one level.
+	root := filepath.Join(projectPath, ".claude", "skills", "jarvis-registry")
+
+	return root, filepath.Join(root, "skills")
 }
 
 // Run resolves a Registry access token, then reconciles the local skills
@@ -228,32 +310,42 @@ func (c *SyncCommand) Run() (err error) {
 		return fmt.Errorf("failed to create Registry client: %s", err.Error())
 	}
 
-	c.mrw = NewManifestReadWriter(c.pluginRoot)
+	c.mrw = NewManifestReadWriter(c.syncRoot)
 
-	// acquire the advisory lock for this plugin root before touching the
+	// acquire the advisory lock for this sync root before touching the
 	// filesystem at all, so two concurrent invocations against the same
 	// target can't race on the consent check or the bootstrap writes
-	release, err := acquireLock(c.registryDir, c.pluginRoot)
+	release, err := acquireLock(c.registryDir, c.syncRoot)
 	if err != nil {
 		return err
 	}
 
 	defer release()
 
-	// gate any mutation of a pre-existing, possibly foreign plugin root
-	if err = c.ensurePluginRootConsent(); err != nil {
+	// gate any mutation of a pre-existing, possibly foreign sync root
+	if err = c.ensureSyncRootConsent(); err != nil {
 		return err
 	}
 
-	// consent already granted: create the plugin root if it doesn't exist yet
-	if err = os.MkdirAll(c.pluginRoot, 0755); err != nil {
-		return fmt.Errorf("failed to create plugin root at %s: %s", c.pluginRoot, err.Error())
+	// consent already granted: create the sync root if it doesn't exist yet
+	if err = os.MkdirAll(c.syncRoot, 0755); err != nil {
+		return fmt.Errorf("failed to create sync root at %s: %s", c.syncRoot, err.Error())
 	}
 
-	// reconcile the CLI-owned plugin manifest
-	pluginJSONCreated, err := reconcilePluginManifest(c.pluginRoot, c.stderrLogger)
-	if err != nil {
-		return err
+	// reconcile the CLI-owned plugin manifest (claude mode only — codex and
+	// copilot have no plugin.json concept). firstTime is the "was this
+	// genuinely the first sync into this destination" signal that drives the
+	// summary banner: plugin.json's non-existence for claude, the manifest's
+	// own non-existence otherwise. c.mrw.Exists() must be read before
+	// WriteManifest runs (at the end of Run), which this placement satisfies.
+	var firstTime bool
+
+	if c.mode == cfg.SkillsModeClaude {
+		if firstTime, err = reconcilePluginManifest(c.syncRoot, c.stderrLogger); err != nil {
+			return err
+		}
+	} else {
+		firstTime = !c.mrw.Exists()
 	}
 
 	// make sure the destination folder exists
@@ -273,7 +365,7 @@ func (c *SyncCommand) Run() (err error) {
 	}
 
 	// reconcile the CLI-owned sync-skills wrapper skill
-	newSyncSkillsVersion, err := reconcileSyncSkillsWrapper(c.destDir, manifest.SyncSkillsVersion, c.stderrLogger)
+	newSyncSkillsVersion, err := reconcileSyncSkillsWrapper(c.destDir, manifest.SyncSkillsVersion, c.mode, c.stderrLogger)
 	if err != nil {
 		return err
 	}
@@ -291,8 +383,12 @@ func (c *SyncCommand) Run() (err error) {
 
 	// reject any remote skill name that is unsafe to use as a filesystem
 	// path component, that would corrupt the Markdown sync summary table,
-	// or that collides with this CLI's own reserved wrapper skill name,
-	// before it reaches any os.* call
+	// or that collides with one of this CLI's own reserved entries — its
+	// wrapper skill folder, or (for codex/copilot, where the manifest lives
+	// directly inside destDir) the skill-lock.json manifest file — before it
+	// reaches any os.* call. Both reservations are matched case-insensitively
+	// because a Registry name's casing is uncontrolled and the destination
+	// filesystem may itself be case-insensitive.
 	for _, r := range remoteSkills {
 		if !isSafeSkillName(r.Name) {
 			return fmt.Errorf("remote skill %s (id %s) has a name that is unsafe to use as a filesystem path or in the sync summary table", r.Name, r.Id)
@@ -300,6 +396,10 @@ func (c *SyncCommand) Run() (err error) {
 
 		if strings.EqualFold(r.Name, reservedSyncSkillsName) {
 			return fmt.Errorf("remote skill %s (id %s) is named %q, which is reserved for this CLI's own wrapper skill", r.Name, r.Id, reservedSyncSkillsName)
+		}
+
+		if strings.EqualFold(r.Name, manifestFileName) {
+			return fmt.Errorf("remote skill %s (id %s) is named %q, which is reserved for this CLI's own sync manifest", r.Name, r.Id, manifestFileName)
 		}
 	}
 
@@ -349,7 +449,7 @@ func (c *SyncCommand) Run() (err error) {
 		return fmt.Errorf("failed to write manifest file after syncing: %s", err.Error())
 	}
 
-	c.printSummary(pluginJSONCreated, toCreate, createOutcomes, toUpdate, updateOutcomes, toDelete, skippedSkills)
+	c.printSummary(firstTime, toCreate, createOutcomes, toUpdate, updateOutcomes, toDelete, skippedSkills)
 
 	return errors.Join(joinErrors(updateOutcomes), joinErrors(createOutcomes))
 }
@@ -504,7 +604,12 @@ func atomicRemoveAll(path string) error {
 // cleanDestDir removes every entry directly under c.destDir that isn't
 // named in skills, except reservedSyncSkillsName — the CLI-owned
 // sync-skills/ wrapper folder is never tracked in the manifest, but must
-// never be deleted regardless of manifest content.
+// never be deleted regardless of manifest content — and manifestFileName,
+// which for codex/copilot lives directly inside destDir (a no-op for
+// claude, where skill-lock.json lives one level up in syncRoot and this
+// scan never sees it). manifestFileName is matched case-sensitively: it is
+// a literal constant this CLI always writes with the same casing, unlike a
+// Registry-supplied skill name.
 func (c *SyncCommand) cleanDestDir(skills []Metadata) error {
 	entries, err := os.ReadDir(c.destDir)
 	if err != nil {
@@ -514,7 +619,7 @@ func (c *SyncCommand) cleanDestDir(skills []Metadata) error {
 	toRemove := make(map[string]struct{}, len(entries))
 
 	for _, e := range entries {
-		if strings.EqualFold(e.Name(), reservedSyncSkillsName) {
+		if strings.EqualFold(e.Name(), reservedSyncSkillsName) || e.Name() == manifestFileName {
 			continue
 		}
 
@@ -783,13 +888,20 @@ func (c *SyncCommand) deleteMany(specs []SyncSpec) error {
 }
 
 // printSummary prints, via c.logger, the first-time sync banner (only
-// when pluginJSONCreated is true, since a brand-new
-// .claude-plugin/plugin.json is the one condition Claude Code's docs
-// confirm needs a new session, decoupled from whether c.destDir itself
-// happened to already exist) followed by the sync summary table.
-func (c *SyncCommand) printSummary(pluginJSONCreated bool, toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec, skipped []skippedSkill) {
-	if pluginJSONCreated {
-		c.logger.Printf("First time skill sync. The %s plugin is created.", c.pluginRoot)
+// when firstTime is true) followed by the sync summary table. For claude
+// mode firstTime tracks a brand-new .claude-plugin/plugin.json — the one
+// condition Claude Code's docs confirm needs a new session, decoupled from
+// whether c.destDir itself happened to already exist; for codex/copilot it
+// tracks the manifest's own first appearance in the destination.
+func (c *SyncCommand) printSummary(firstTime bool, toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec, skipped []skippedSkill) {
+	if firstTime {
+		switch c.mode {
+		case cfg.SkillsModeClaude:
+			c.logger.Printf("First time skill sync. The %s plugin is created.", c.syncRoot)
+		case cfg.SkillsModeCodex, cfg.SkillsModeCopilot:
+			c.logger.Printf("First time skill sync into %s.", c.syncRoot)
+		}
+
 		c.logger.Println()
 	}
 

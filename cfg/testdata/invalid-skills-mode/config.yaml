@@ -1,0 +1,5 @@
+registry:
+  base_url: "https://example.com"
+local:
+  skills:
+    mode: "vscode"
