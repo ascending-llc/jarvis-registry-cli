@@ -28,6 +28,18 @@ type (
 			// Registry API listen on different localhost ports.
 			AuthBaseUrl string `mapstructure:"auth_base_url"`
 		} `mapstructure:"registry"`
+
+		// Local holds settings that configure this machine's own CLI
+		// behavior, as opposed to anything about the Registry server itself.
+		Local struct {
+			// Skills holds settings specific to the sync-skills subcommand.
+			Skills struct {
+				// SkipIds lists skill Ids that sync-skills must never create,
+				// update, or keep synced locally, even when the caller has
+				// Registry access.
+				SkipIds []string `mapstructure:"skip_ids"`
+			} `mapstructure:"skills"`
+		} `mapstructure:"local"`
 	}
 )
 
@@ -40,9 +52,10 @@ const RegistryDirName = ".jarvis-registry"
 
 // Load reads config.yaml (or config.yml) from registryDir, unmarshals it
 // into a Config, and validates and resolves its fields — normalizing
-// Registry.BaseUrl and defaulting Registry.AuthBaseUrl to Registry.BaseUrl
-// when it isn't set. It returns an error if neither file exists, the file
-// cannot be parsed, or validation fails.
+// Registry.BaseUrl and Local.Skills.SkipIds, and defaulting
+// Registry.AuthBaseUrl to Registry.BaseUrl when it isn't set. It returns an
+// error if neither file exists, the file cannot be parsed, or validation
+// fails.
 func Load(registryDir string) (config Config, err error) {
 	v := viper.New()
 
@@ -75,7 +88,41 @@ func Load(registryDir string) (config Config, err error) {
 		return config, fmt.Errorf("invalid registry.auth_base_url in %s: %s", path, err.Error())
 	}
 
+	config.Local.Skills.SkipIds, err = normalizeSkipIds(config.Local.Skills.SkipIds)
+	if err != nil {
+		return config, fmt.Errorf("invalid local.skills.skip_ids in %s: %s", path, err.Error())
+	}
+
 	return config, nil
+}
+
+// normalizeSkipIds trims surrounding whitespace from every configured skill
+// Id and removes duplicates while preserving the first occurrence's position.
+// It returns nil for an empty input and rejects entries that are empty after
+// trimming.
+func normalizeSkipIds(raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+
+	seen := make(map[string]struct{}, len(raw))
+	normalized := make([]string, 0, len(raw))
+
+	for i, id := range raw {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil, fmt.Errorf("entry %d is empty", i)
+		}
+
+		if _, ok := seen[id]; ok {
+			continue
+		}
+
+		seen[id] = struct{}{}
+		normalized = append(normalized, id)
+	}
+
+	return normalized, nil
 }
 
 // resolveConfigPath returns the existing config.yaml or config.yml path in

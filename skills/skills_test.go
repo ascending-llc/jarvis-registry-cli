@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -103,8 +104,9 @@ func TestSyncCommandAfterApply(t *testing.T) {
 		baseUrl         string
 		authBaseUrl     string
 		wantAuthBaseUrl string
+		skipIds         []string
 	}{
-		{name: "distinct auth_base_url is wired through as-is", baseUrl: "https://registry.example.com", authBaseUrl: "http://localhost:8888", wantAuthBaseUrl: "http://localhost:8888"},
+		{name: "distinct auth_base_url and skip_ids are wired through as-is", baseUrl: "https://registry.example.com", authBaseUrl: "http://localhost:8888", wantAuthBaseUrl: "http://localhost:8888", skipIds: []string{"skip-1", "skip-2"}},
 		{name: "auth_base_url defaulted to base_url by cfg.Load is wired through as-is", baseUrl: "https://registry.example.com", authBaseUrl: "https://registry.example.com", wantAuthBaseUrl: "https://registry.example.com"},
 	}
 
@@ -122,6 +124,7 @@ func TestSyncCommandAfterApply(t *testing.T) {
 
 				config.Registry.BaseUrl = c.baseUrl
 				config.Registry.AuthBaseUrl = c.authBaseUrl
+				config.Local.Skills.SkipIds = c.skipIds
 
 				return config, nil
 			}
@@ -131,9 +134,62 @@ func TestSyncCommandAfterApply(t *testing.T) {
 
 			assert.Equal(t, c.baseUrl, cmd.baseUrl, "baseUrl should be taken from config.Registry.BaseUrl")
 			assert.Equal(t, c.wantAuthBaseUrl, cmd.authBaseUrl, "authBaseUrl should be taken from config.Registry.AuthBaseUrl, distinct from baseUrl when cfg.Load resolved it that way")
+			assert.Equal(t, c.skipIds, cmd.skipIds, "skipIds should be taken from config.Local.Skills.SkipIds")
 			assert.Equal(t, filepath.Join(cmd.ProjectPath, ".claude", "skills", "jarvis-registry"), cmd.pluginRoot, "pluginRoot should be derived from ProjectPath")
 
 			require.NotNil(t, cmd.tp, "tp should be initialized")
+		})
+	}
+}
+
+func TestPartitionSkippableSkills(t *testing.T) {
+	eligible := Metadata{Id: "eligible-1", Name: "eligible", Version: 1}
+	userSkipped := Metadata{Id: "user-skip-1", Name: "user-skipped", Version: 2}
+	chatSkipped := Metadata{Id: "chat-skip-1", Name: "chat-skipped", Version: 3, FileCount: 1, CreatedByRegistry: false}
+
+	cases := []struct {
+		name          string
+		remote        []Metadata
+		skipIds       []string
+		wantEligible  []Metadata
+		wantSkipped   []skippedSkill
+		wantUnmatched []string
+	}{
+		{
+			name:         "no skiplist preserves existing chat-owned behavior",
+			remote:       []Metadata{eligible, chatSkipped},
+			wantEligible: []Metadata{eligible},
+			wantSkipped:  []skippedSkill{{Metadata: chatSkipped, Reason: chatOwnedFilesSkippedNote}},
+		},
+		{
+			name:         "configured id skips an otherwise eligible skill",
+			remote:       []Metadata{eligible, userSkipped},
+			skipIds:      []string{userSkipped.Id},
+			wantEligible: []Metadata{eligible},
+			wantSkipped:  []skippedSkill{{Metadata: userSkipped, Reason: userSkippedNote}},
+		},
+		{
+			name:          "unmatched configured ids retain their configuration order",
+			remote:        []Metadata{eligible},
+			skipIds:       []string{"missing-2", "missing-1"},
+			wantEligible:  []Metadata{eligible},
+			wantUnmatched: []string{"missing-2", "missing-1"},
+		},
+		{
+			name:        "chat-owned reason takes precedence but configured id is matched",
+			remote:      []Metadata{chatSkipped},
+			skipIds:     []string{chatSkipped.Id},
+			wantSkipped: []skippedSkill{{Metadata: chatSkipped, Reason: chatOwnedFilesSkippedNote}},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotEligible, gotSkipped, gotUnmatched := partitionSkippableSkills(c.remote, c.skipIds)
+
+			assert.Equal(t, c.wantEligible, gotEligible)
+			assert.Equal(t, c.wantSkipped, gotSkipped)
+			assert.Equal(t, c.wantUnmatched, gotUnmatched)
 		})
 	}
 }
@@ -529,6 +585,109 @@ func bootstrapPluginRoot(t *testing.T, pluginRoot, destDir string) {
 
 	err = os.WriteFile(filepath.Join(pluginRoot, manifestFileName), body, 0644)
 	require.NoError(t, err, "should be able to write the mocked bootstrap manifest")
+}
+
+func TestSyncCommandRunUserSkipList(t *testing.T) {
+	const (
+		id   = "user-skip-1"
+		name = "user-skipped-skill"
+	)
+
+	content := Content{Description: "a user-skipped skill", Body: "Some body.\n"}
+
+	t.Run("never-synced skill is skipped without fetching content", func(t *testing.T) {
+		ts, contentRequested := newSingleSkillTestServer(t, id, name, 2, content, false)
+		cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
+		cmd.skipIds = []string{id}
+
+		var stdout, stderr bytes.Buffer
+
+		cmd.logger = log.New(&stdout, "", 0)
+		cmd.stderrLogger = log.New(&stderr, "", 0)
+
+		err := cmd.Run()
+		require.NoError(t, err, "Run should succeed when an available skill is configured to be skipped")
+		assert.False(t, *contentRequested, "get_skill_content should never be requested for a configured skip")
+		assert.Empty(t, stderr.String(), "a matched skip id should not produce an unmatched warning")
+
+		_, statErr := os.Stat(filepath.Join(mockSkillsDir, name))
+		assert.True(t, errors.Is(statErr, fs.ErrNotExist), "a configured skip should not be created locally")
+
+		rows := parseMarkdownSummaryRows(t, stdout.String())
+		assertSummaryRow(t, rows, name, statusSkipped, "-", "2", userSkippedNote)
+
+		manifest, readErr := cmd.mrw.ReadManifest()
+		require.NoError(t, readErr, "the rewritten manifest should be readable")
+		assert.Empty(t, manifest.Skills, "a configured skip should not be recorded in skill-lock.json")
+	})
+
+	t.Run("previously-synced skill is removed and remains visibly skipped", func(t *testing.T) {
+		ts, contentRequested := newSingleSkillTestServer(t, id, name, 2, content, false)
+		cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
+		cmd.skipIds = []string{id}
+
+		writeSingleSkillManifest(t, cmd.pluginRoot, id, name, 1)
+		require.NoError(t, os.MkdirAll(filepath.Join(mockSkillsDir, name), 0755), "should be able to create the previously-synced skill folder")
+		require.NoError(t, os.WriteFile(filepath.Join(mockSkillsDir, name, "SKILL.md"), []byte("old content\n"), 0644), "should be able to seed the previously-synced skill content")
+
+		var stdout bytes.Buffer
+
+		cmd.logger = log.New(&stdout, "", 0)
+
+		err := cmd.Run()
+		require.NoError(t, err, "Run should succeed removing a newly skiplisted local skill")
+		assert.False(t, *contentRequested, "a newly skiplisted local skill should be removed without fetching remote content")
+
+		_, statErr := os.Stat(filepath.Join(mockSkillsDir, name))
+		assert.True(t, errors.Is(statErr, fs.ErrNotExist), "the previously-synced skill folder should be deleted")
+
+		manifest, readErr := cmd.mrw.ReadManifest()
+		require.NoError(t, readErr, "the rewritten manifest should be readable")
+		assert.Empty(t, manifest.Skills, "the removed configured skip should be absent from skill-lock.json")
+
+		rows := parseMarkdownSummaryRows(t, stdout.String())
+		assertSummaryRow(t, rows, name, statusRemoved, "1", "-", "")
+		assertSummaryRow(t, rows, name, statusSkipped, "-", "2", userSkippedNote)
+	})
+
+	t.Run("unmatched id warns without failing other synchronization", func(t *testing.T) {
+		ts, contentRequested := newSingleSkillTestServer(t, id, name, 2, content, false)
+		cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
+		cmd.skipIds = []string{"missing-id"}
+
+		var stderr bytes.Buffer
+
+		cmd.stderrLogger = log.New(&stderr, "", 0)
+
+		err := cmd.Run()
+		require.NoError(t, err, "an unmatched skip id should not fail Run")
+		assert.True(t, *contentRequested, "other available skills should still sync normally")
+		assert.Contains(t, stderr.String(), "warning: local.skills.skip_ids lists 1 id(s)", "stderr should explain the unmatched skip configuration")
+		assert.Contains(t, stderr.String(), "missing-id", "stderr should name the unmatched id")
+
+		_, statErr := os.Stat(filepath.Join(mockSkillsDir, name, "SKILL.md"))
+		assert.NoError(t, statErr, "an unmatched skip id should not prevent another skill from being created")
+	})
+
+	t.Run("chat-owned technical reason takes precedence", func(t *testing.T) {
+		meta := Metadata{Id: id, Name: name, Version: 2, FileCount: 1, CreatedByRegistry: false}
+		ts, contentRequested := newSingleSkillTestServerFromMetadata(t, meta, content, false)
+		cmd, _, _ := newTestSyncSetup(t, ts)
+		cmd.skipIds = []string{id}
+
+		var stdout, stderr bytes.Buffer
+
+		cmd.logger = log.New(&stdout, "", 0)
+		cmd.stderrLogger = log.New(&stderr, "", 0)
+
+		err := cmd.Run()
+		require.NoError(t, err, "Run should succeed when a configured skip is also technically unsyncable")
+		assert.False(t, *contentRequested, "a chat-owned multi-file skill should never have its content requested")
+		assert.Empty(t, stderr.String(), "a configured id matching a chat-owned skip should not be reported as unmatched")
+
+		rows := parseMarkdownSummaryRows(t, stdout.String())
+		assertSummaryRow(t, rows, name, statusSkipped, "-", "2", chatOwnedFilesSkippedNote)
+	})
 }
 
 // TestSyncCommandRunFirstTimeBanner covers the first-time-sync banner:
