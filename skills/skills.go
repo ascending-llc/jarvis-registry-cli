@@ -40,7 +40,7 @@ type (
 		GetAccessToken() (string, error)
 	}
 
-	// SyncCommand implements the "sync-skills" subcommand: it reconciles
+	// SyncCommand implements the "skills sync" subcommand: it reconciles
 	// the local skills folder against the skills available to the
 	// caller on the Registry, creating, updating, and deleting local
 	// skill folders as needed.

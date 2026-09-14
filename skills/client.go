@@ -30,7 +30,7 @@ type (
 		// FileCount is the number of supporting files the skill has
 		// beyond its SKILL.md. CreatedByRegistry reports whether the
 		// skill was created by Jarvis Registry itself (as opposed to
-		// Jarvis Chat); together they decide whether sync-skills can read
+		// Jarvis Chat); together they decide whether skills sync can read
 		// the skill's supporting files (see partitionSkippableSkills).
 		FileCount         int  `json:"fileCount"`
 		CreatedByRegistry bool `json:"createdByRegistry"`

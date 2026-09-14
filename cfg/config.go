@@ -32,16 +32,16 @@ type (
 		// Local holds settings that configure this machine's own CLI
 		// behavior, as opposed to anything about the Registry server itself.
 		Local struct {
-			// Skills holds settings specific to the sync-skills subcommand.
+			// Skills holds settings specific to the skills sync subcommand.
 			Skills struct { //nolint:govet // fieldalignment: keep SkipIds and Mode in the order they were introduced, each with its own doc comment, rather than let the fixer collapse them into an undocumented, alignment-packed block — the two fields are both 8-byte-aligned (SkillsMode is a defined string type), so no padding is ever saved by reordering them.
-				// SkipIds lists skill Ids that sync-skills must never create,
+				// SkipIds lists skill Ids that skills sync must never create,
 				// update, or keep synced locally, even when the caller has
 				// Registry access.
 				SkipIds []string `mapstructure:"skip_ids"`
 
-				// Mode selects the skills-directory convention sync-skills
+				// Mode selects the skills-directory convention skills sync
 				// targets. Empty means unset — cfg.Load does not default it,
-				// so sync-skills can distinguish "never configured" from any
+				// so skills sync can distinguish "never configured" from any
 				// of the three real modes and fail with an actionable message
 				// naming exactly what's missing.
 				Mode SkillsMode `mapstructure:"mode"`
@@ -49,7 +49,7 @@ type (
 		} `mapstructure:"local"`
 	}
 
-	// SkillsMode selects which skills-directory convention sync-skills
+	// SkillsMode selects which skills-directory convention skills sync
 	// targets.
 	SkillsMode string
 )
@@ -133,7 +133,7 @@ func Load(registryDir string) (config Config, err error) {
 	// Validate the skills mode only when it's set: a config file predating
 	// this field (or one deliberately leaving it to be supplied via --mode)
 	// must still load. No default is applied — an absent mode stays absent
-	// and is handled by sync-skills's own fail-loud resolution.
+	// and is handled by skills sync's own fail-loud resolution.
 	if config.Local.Skills.Mode != "" && !config.Local.Skills.Mode.Valid() {
 		return config, fmt.Errorf("invalid local.skills.mode in %s: must be one of claude, codex, copilot, got %q", path, config.Local.Skills.Mode)
 	}
