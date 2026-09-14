@@ -28,15 +28,58 @@ type (
 			// Registry API listen on different localhost ports.
 			AuthBaseUrl string `mapstructure:"auth_base_url"`
 		} `mapstructure:"registry"`
+
+		// Local holds settings for how the CLI manages files on the local
+		// machine, as opposed to how it talks to the Registry.
+		Local struct {
+			Skills struct {
+				// Mode selects the skills-directory convention sync-skills
+				// targets. Empty means unset — cfg.Load does not default it,
+				// so sync-skills can distinguish "never configured" from any
+				// of the three real modes and fail with an actionable message
+				// naming exactly what's missing.
+				Mode SkillsMode `mapstructure:"mode"`
+			} `mapstructure:"skills"`
+		} `mapstructure:"local"`
 	}
+
+	// SkillsMode selects which skills-directory convention sync-skills
+	// targets.
+	SkillsMode string
 )
 
-// RegistryDirName is the name of the per-user directory, under the user's
-// home directory, that holds the CLI's config file and its advisory sync
-// locks (see skills.acquireLock). The sync manifest itself lives inside
-// the plugin root that skills.SyncCommand derives from its ProjectPath
-// argument, not here.
-const RegistryDirName = ".jarvis-registry"
+const (
+	// SkillsModeClaude syncs into Claude Code's plugin-owned subtree at
+	// <ProjectPath>/.claude/skills/jarvis-registry/skills/.
+	SkillsModeClaude SkillsMode = "claude"
+
+	// SkillsModeCodex syncs into Codex's flat project-scope directory at
+	// <ProjectPath>/.agents/skills/.
+	SkillsModeCodex SkillsMode = "codex"
+
+	// SkillsModeCopilot syncs into GitHub Copilot's flat project-scope
+	// directory at <ProjectPath>/.github/skills/.
+	SkillsModeCopilot SkillsMode = "copilot"
+
+	// RegistryDirName is the name of the per-user directory, under the
+	// user's home directory, that holds the CLI's config file and its
+	// advisory sync locks (see skills.acquireLock). The sync manifest
+	// itself lives inside the sync root that skills.SyncCommand derives
+	// from its mode and ProjectPath, not here.
+	RegistryDirName = ".jarvis-registry"
+)
+
+// Valid reports whether m is one of the three recognized modes. The zero
+// value ("") is not valid — an unset mode is a distinct, caller-visible
+// state, not a fourth mode.
+func (m SkillsMode) Valid() bool {
+	switch m {
+	case SkillsModeClaude, SkillsModeCodex, SkillsModeCopilot:
+		return true
+	default:
+		return false
+	}
+}
 
 // Load reads config.yaml (or config.yml) from registryDir, unmarshals it
 // into a Config, and validates and resolves its fields — normalizing
@@ -73,6 +116,14 @@ func Load(registryDir string) (config Config, err error) {
 		config.Registry.AuthBaseUrl = config.Registry.BaseUrl
 	} else if err = validateBaseUrl(config.Registry.AuthBaseUrl); err != nil {
 		return config, fmt.Errorf("invalid registry.auth_base_url in %s: %s", path, err.Error())
+	}
+
+	// Validate the skills mode only when it's set: a config file predating
+	// this field (or one deliberately leaving it to be supplied via --mode)
+	// must still load. No default is applied — an absent mode stays absent
+	// and is handled by sync-skills's own fail-loud resolution.
+	if config.Local.Skills.Mode != "" && !config.Local.Skills.Mode.Valid() {
+		return config, fmt.Errorf("invalid local.skills.mode in %s: must be one of claude, codex, copilot, got %q", path, config.Local.Skills.Mode)
 	}
 
 	return config, nil

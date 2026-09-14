@@ -12,6 +12,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCodexCopilotWrappersOmitClaudeOnlyFrontmatter(t *testing.T) {
+	claudeOnlyKeys := []string{"argument-hint", "arguments", "disable-model-invocation"}
+
+	for _, tc := range []struct {
+		name    string
+		content []byte
+	}{
+		{name: "codex", content: syncSkillsSkillContentCodex},
+		{name: "copilot", content: syncSkillsSkillContentCopilot},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := string(tc.content)
+
+			for _, key := range claudeOnlyKeys {
+				assert.NotContains(t, body, key, "the %s wrapper must not carry the Claude-only %q frontmatter key", tc.name, key)
+			}
+
+			assert.Contains(t, body, "--mode "+tc.name, "the %s wrapper must instruct the agent to pass its own --mode", tc.name)
+		})
+	}
+}
+
+func TestManifestReadWriterExists(t *testing.T) {
+	dir := t.TempDir()
+	mrw := NewManifestReadWriter(dir)
+
+	assert.False(t, mrw.Exists(), "Exists should report false when the manifest file is absent")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, manifestFileName), []byte("{}"), 0644), "should be able to write a manifest file")
+
+	assert.True(t, mrw.Exists(), "Exists should report true once the manifest file is present")
+}
+
 func TestManifestReadWriterWriteManifest(t *testing.T) {
 	t.Run("round-trips through ReadManifest and leaves the file read-only with no temp litter", func(t *testing.T) {
 		dir := t.TempDir()

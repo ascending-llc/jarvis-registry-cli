@@ -15,8 +15,9 @@ complete -c jarvis-registry -n '__fish_seen_subcommand_from auth; and not __fish
 complete -c jarvis-registry -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from login status' -a status -d 'Show Registry authentication status.'
 complete -c jarvis-registry -n '__fish_seen_subcommand_from auth' -s h -l help -d 'Show context-sensitive help.'
 
-# sync-skills subcommand: project directory and help.
+# sync-skills subcommand: project directory, mode, and help.
 complete -c jarvis-registry -n '__fish_seen_subcommand_from sync-skills' -s h -l help -d 'Show context-sensitive help.'
+complete -c jarvis-registry -n '__fish_seen_subcommand_from sync-skills' -l mode -d 'Skills sync mode.' -x -a 'claude codex copilot'
 complete -c jarvis-registry -n '__fish_seen_subcommand_from sync-skills' -a '(__fish_complete_directories)' -d 'Project directory'
 
 # vim: set ft=fish :

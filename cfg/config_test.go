@@ -33,6 +33,29 @@ func TestLoadValid(t *testing.T) {
 	}
 }
 
+func TestLoadSkillsMode(t *testing.T) {
+	t.Run("absent mode passes through as the unset zero value", func(t *testing.T) {
+		config, err := Load(filepath.Join("testdata", "valid-base-url"))
+		require.NoError(t, err, "a config with no local.skills.mode key must still load")
+		assert.Equal(t, SkillsMode(""), config.Local.Skills.Mode, "an absent mode stays absent — no default is applied")
+	})
+
+	t.Run("a valid mode is accepted", func(t *testing.T) {
+		config, err := Load(filepath.Join("testdata", "valid-skills-mode-codex"))
+		require.NoError(t, err, "a config with a recognized mode must load")
+		assert.Equal(t, SkillsModeCodex, config.Local.Skills.Mode, "the configured mode should be parsed through")
+	})
+
+	t.Run("an invalid mode is rejected with a path-qualified error", func(t *testing.T) {
+		path := filepath.Join("testdata", "invalid-skills-mode")
+
+		_, err := Load(path)
+		require.Error(t, err, "an unrecognized mode must be rejected")
+		assert.Contains(t, err.Error(), "invalid local.skills.mode in "+filepath.Join(path, "config.yaml"), "the error must name the offending file")
+		assert.Contains(t, err.Error(), "claude, codex, copilot", "the error must name the valid modes")
+	})
+}
+
 func TestLoadMissingConfig(t *testing.T) {
 	registryDir := t.TempDir()
 
