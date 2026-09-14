@@ -91,6 +91,10 @@ Run `jarvis-registry skills show` to print the resolved `local.skills.mode` and
 - `jarvis-registry auth status` — prints the configured Registry base URL and whether you're currently
   logged in (plus granted token scopes). Exits with status `1` when not logged in, so it's safe to use
   in scripts.
+- If you're already logged in but `auth status`/`skills sync` still reports "not logged in," and
+  you're running from a restricted shell (an AI agent's sandboxed execution, a container, CI), retry
+  from an unrestricted shell — macOS Keychain access failures in a sandbox surface as "not found," not
+  "permission denied."
 
 ## Syncing skills
 

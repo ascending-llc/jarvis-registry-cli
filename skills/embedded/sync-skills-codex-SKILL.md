@@ -12,10 +12,14 @@ description: Sync the latest Jarvis Registry skills into Codex from your Jarvis 
 Run `jarvis-registry skills sync $path --mode codex`, substituting `$path` verbatim (not the
 literal text `$path`).
 
-If it fails because the user isn't authenticated, tell them to run `jarvis-registry auth login`
-(this is the command that opens a browser device-flow login), then re-run sync. `skills sync`
-itself never opens a browser or starts a login flow; it only ever reads an already-cached
-credential and fails loudly if none exists.
+If it fails with `not logged in to the Registry`, first retry the exact same command requesting
+escalated/unsandboxed execution before concluding the user needs to log in. Codex's default sandbox
+can block macOS Keychain access in a way that reads back as "credential not found" even when the
+user is already logged in, so this specific error is not reliable evidence of a missing login until
+an unsandboxed retry has ruled that out. Only if the escalated retry fails with the same error should
+you tell the user to run `jarvis-registry auth login` (this is the command that opens a browser
+device-flow login), then re-run sync. `skills sync` itself never opens a browser or starts a login
+flow; it only ever reads an already-cached credential and fails loudly if none exists.
 
 If it fails because the destination folder exists but wasn't created by this CLI, tell the user
 to run `jarvis-registry skills sync $path --mode codex` themselves from a real terminal once, to
