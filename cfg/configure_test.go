@@ -15,7 +15,7 @@ import (
 
 func TestConfigureCommandFirstRun(t *testing.T) {
 	homeDir := t.TempDir()
-	out, err := runConfigure(homeDir, "client.example.com\n")
+	out, err := runConfigure(homeDir, "client.example.com\n1\n")
 	require.NoError(t, err)
 
 	configPath := filepath.Join(homeDir, RegistryDirName, "config.yaml")
@@ -27,6 +27,7 @@ func TestConfigureCommandFirstRun(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "https://client.example.com", config.Registry.BaseUrl)
+	assert.Equal(t, SkillsModeClaude, config.Local.Skills.Mode, "the first menu option (claude) should be persisted")
 	assert.Contains(t, out, "✓ Configuration saved to "+configPath)
 	assert.NotContains(t, out, "auth_base_url")
 }
@@ -43,10 +44,14 @@ registry:
   tenant: customer-one
 feature:
   enabled: true
+local:
+  skills:
+    mode: codex
 `
 	require.NoError(t, os.WriteFile(filepath.Join(registryDir, "config.yaml"), []byte(initial), 0600))
 
-	out, err := runConfigure(homeDir, "https://new.example.com\n")
+	// Update the base URL, then keep the existing skills mode with blank input.
+	out, err := runConfigure(homeDir, "https://new.example.com\n\n")
 	require.NoError(t, err)
 
 	content, err := os.ReadFile(filepath.Join(registryDir, "config.yaml"))
@@ -69,15 +74,16 @@ feature:
 
 func TestConfigureCommandKeepsCurrentValueOnEmptyInput(t *testing.T) {
 	homeDir := t.TempDir()
-	require.NoError(t, writeTestConfig(homeDir, "registry:\n  base_url: https://current.example.com\n"))
+	require.NoError(t, writeTestConfig(homeDir, "registry:\n  base_url: https://current.example.com\nlocal:\n  skills:\n    mode: copilot\n"))
 
-	out, err := runConfigure(homeDir, "\n")
+	out, err := runConfigure(homeDir, "\n\n")
 	require.NoError(t, err)
 
 	config, err := Load(filepath.Join(homeDir, RegistryDirName))
 	require.NoError(t, err)
 
 	assert.Equal(t, "https://current.example.com", config.Registry.BaseUrl)
+	assert.Equal(t, SkillsModeCopilot, config.Local.Skills.Mode, "blank input should keep the currently configured mode")
 	assert.Contains(t, out, "✓ Configuration saved to ")
 }
 
@@ -89,7 +95,7 @@ func TestConfigureCommandUpdatesExistingYMLFile(t *testing.T) {
 	ymlPath := filepath.Join(registryDir, "config.yml")
 	require.NoError(t, os.WriteFile(ymlPath, []byte("registry:\n  base_url: https://old.example.com\n"), 0600))
 
-	out, err := runConfigure(homeDir, "new.example.com\n")
+	out, err := runConfigure(homeDir, "new.example.com\n1\n")
 	require.NoError(t, err)
 
 	config, err := Load(registryDir)
@@ -106,7 +112,7 @@ func TestConfigureCommandPreservesCommentOnlyConfig(t *testing.T) {
 	initial := "# keep this first comment\n\n  # keep this indented comment\n"
 	require.NoError(t, writeTestConfig(homeDir, initial))
 
-	_, err := runConfigure(homeDir, "comments.example.com\n")
+	_, err := runConfigure(homeDir, "comments.example.com\n1\n")
 	require.NoError(t, err)
 
 	content, err := os.ReadFile(filepath.Join(homeDir, RegistryDirName, "config.yaml"))
@@ -121,15 +127,81 @@ func TestConfigureCommandPreservesCommentOnlyConfig(t *testing.T) {
 
 func TestConfigureCommandRepromptsUntilInputIsValid(t *testing.T) {
 	homeDir := t.TempDir()
-	out, err := runConfigure(homeDir, "\nhttp://client.example.com\nvalid.example.com\n")
+	// base URL: blank (required), invalid scheme, then valid.
+	// mode: out-of-range digit, non-numeric, then a valid choice (2 → codex).
+	out, err := runConfigure(homeDir, "\nhttp://client.example.com\nvalid.example.com\n9\nabc\n2\n")
 	require.NoError(t, err)
 
 	config, err := Load(filepath.Join(homeDir, RegistryDirName))
 	require.NoError(t, err)
 
 	assert.Equal(t, "https://valid.example.com", config.Registry.BaseUrl)
+	assert.Equal(t, SkillsModeCodex, config.Local.Skills.Mode)
 	assert.Contains(t, out, "a value is required")
 	assert.Contains(t, out, "scheme must be https")
+	assert.Contains(t, out, "enter a number between 1 and 3")
+}
+
+func TestConfigureCommandPicksEachModeByDigit(t *testing.T) {
+	cases := []struct {
+		digit string
+		want  SkillsMode
+	}{
+		{digit: "1", want: SkillsModeClaude},
+		{digit: "2", want: SkillsModeCodex},
+		{digit: "3", want: SkillsModeCopilot},
+	}
+
+	for _, c := range cases {
+		t.Run(string(c.want), func(t *testing.T) {
+			homeDir := t.TempDir()
+			_, err := runConfigure(homeDir, "client.example.com\n"+c.digit+"\n")
+			require.NoError(t, err)
+
+			config, err := Load(filepath.Join(homeDir, RegistryDirName))
+			require.NoError(t, err)
+			assert.Equal(t, c.want, config.Local.Skills.Mode)
+		})
+	}
+}
+
+func TestPrintOptionsPrompt(t *testing.T) {
+	cases := []struct {
+		name    string
+		current string
+		want    string
+	}{
+		{name: "without current value", want: "Skills sync mode:\n  1) claude\n  2) codex\n  3) copilot\nChoose [1-3]: "},
+		{name: "with current value", current: "codex", want: "Skills sync mode:\n  1) claude\n  2) codex\n  3) copilot\nChoose [1-3, current: codex]: "},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var out strings.Builder
+
+			printOptionsPrompt(&out, "Skills sync mode", []string{"claude", "codex", "copilot"}, testCase.current)
+
+			assert.Equal(t, testCase.want, out.String())
+		})
+	}
+}
+
+func TestResolveOption(t *testing.T) {
+	options := []string{"claude", "codex", "copilot"}
+
+	t.Run("resolves a valid 1-based index", func(t *testing.T) {
+		got, err := resolveOption(options, "3")
+		require.NoError(t, err)
+		assert.Equal(t, "copilot", got)
+	})
+
+	for _, input := range []string{"0", "4", "abc", "-1", "1.5", ""} {
+		t.Run("rejects "+input, func(t *testing.T) {
+			_, err := resolveOption(options, input)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "enter a number between 1 and 3")
+		})
+	}
 }
 
 func TestPrintPrompt(t *testing.T) {
@@ -177,7 +249,7 @@ func TestConfigureCommandAcceptsLocalHTTP(t *testing.T) {
 	for _, value := range cases {
 		t.Run(value, func(t *testing.T) {
 			homeDir := t.TempDir()
-			_, err := runConfigure(homeDir, value+"\n")
+			_, err := runConfigure(homeDir, value+"\n1\n")
 			require.NoError(t, err)
 
 			config, err := Load(filepath.Join(homeDir, RegistryDirName))

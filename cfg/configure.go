@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -27,11 +28,17 @@ type (
 		registryDir string
 	}
 
-	configField struct { //nolint:govet // fieldalignment: keep the field definition in prompt-path-processing order.
+	configField struct {
 		label     string
 		path      []string
 		normalize func(string) string
 		validate  func(string) error
+
+		// options, when non-nil, makes this a digit-menu field instead of a
+		// free-text one: Run prompts "1) opt-a  2) opt-b ..." and resolves
+		// the user's numeric choice to options[choice-1], instead of calling
+		// normalize/validate.
+		options []string
 	}
 )
 
@@ -41,6 +48,11 @@ var configurableFields = []configField{
 		path:      []string{"registry", "base_url"},
 		normalize: normalizeBaseURL,
 		validate:  validateBaseUrl,
+	},
+	{
+		label:   "Skills sync mode",
+		path:    []string{"local", "skills", "mode"},
+		options: []string{"claude", "codex", "copilot"},
 	},
 }
 
@@ -79,7 +91,11 @@ func (c *ConfigureCommand) Run() error {
 		current := rw.Get(field.path)
 
 		for {
-			printPrompt(os.Stdout, field.label, current)
+			if field.options != nil {
+				printOptionsPrompt(os.Stdout, field.label, field.options, current)
+			} else {
+				printPrompt(os.Stdout, field.label, current)
+			}
 
 			if !scanner.Scan() {
 				if err = scanner.Err(); err != nil {
@@ -100,12 +116,23 @@ func (c *ConfigureCommand) Run() error {
 				continue
 			}
 
-			value = normalizeFieldValue(field, value)
+			if field.options != nil {
+				resolved, resolveErr := resolveOption(field.options, value)
+				if resolveErr != nil {
+					c.logger.Println(resolveErr)
 
-			if err = field.validate(value); err != nil {
-				c.logger.Println(err)
+					continue
+				}
 
-				continue
+				value = resolved
+			} else {
+				value = normalizeFieldValue(field, value)
+
+				if err = field.validate(value); err != nil {
+					c.logger.Println(err)
+
+					continue
+				}
 			}
 
 			rw.Set(field.path, value)
@@ -131,6 +158,35 @@ func printPrompt(out io.Writer, label string, current string) {
 	}
 
 	_, _ = fmt.Fprintf(out, "%s [%s]: ", label, current)
+}
+
+// printOptionsPrompt renders a digit menu for a field's options, marking
+// current (if any) so blank input can keep it — mirroring printPrompt's
+// bracketed-current-value convention for free-text fields.
+func printOptionsPrompt(out io.Writer, label string, options []string, current string) {
+	_, _ = fmt.Fprintf(out, "%s:\n", label)
+
+	for i, opt := range options {
+		_, _ = fmt.Fprintf(out, "  %d) %s\n", i+1, opt)
+	}
+
+	if current != "" {
+		_, _ = fmt.Fprintf(out, "Choose [1-%d, current: %s]: ", len(options), current)
+
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "Choose [1-%d]: ", len(options))
+}
+
+// resolveOption parses input as a 1-based index into options.
+func resolveOption(options []string, input string) (string, error) {
+	i, err := strconv.Atoi(input)
+	if err != nil || i < 1 || i > len(options) {
+		return "", fmt.Errorf("enter a number between 1 and %d", len(options))
+	}
+
+	return options[i-1], nil
 }
 
 func normalizeFieldValue(field configField, value string) string {
