@@ -12,17 +12,17 @@ arguments: [path]
 |----------|-------------|
 | `$path` | Optional project directory (absolute, relative, or "."/"this directory"/"current directory") to sync skills into. Omit if the user didn't specify one. |
 
-If the user specified a project directory, run `jarvis-registry sync-skills $path --mode claude`,
+If the user specified a project directory, run `jarvis-registry skills sync $path --mode claude`,
 substituting `$path` verbatim (not the literal text `$path`). Otherwise, run
-`jarvis-registry sync-skills --mode claude` with no path argument at all.
+`jarvis-registry skills sync --mode claude` with no path argument at all.
 
 If it fails because the user isn't authenticated, tell them to run `jarvis-registry auth login`
-(this is the command that opens a browser device-flow login), then re-run sync. `sync-skills`
+(this is the command that opens a browser device-flow login), then re-run sync. `skills sync`
 itself never opens a browser or starts a login flow; it only ever reads an already-cached
 credential and fails loudly if none exists.
 
 If it fails because the destination folder exists but wasn't created by this CLI, tell the user
-to run `jarvis-registry sync-skills --mode claude` themselves from a real terminal once (carrying
+to run `jarvis-registry skills sync --mode claude` themselves from a real terminal once (carrying
 through `$path`, if the user specified one), to confirm it's safe for the CLI to manage that
 folder.
 

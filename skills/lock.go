@@ -18,7 +18,7 @@ import (
 const lockStaleAfter = 30 * time.Second
 
 // acquireLock takes an advisory, per-pluginRoot lock so two concurrent
-// sync-skills invocations against the same target can't race on the
+// skills sync invocations against the same target can't race on the
 // consent check or the bootstrap writes. The lock file lives under
 // <registryDir>/locks/, named by the SHA-256 hex digest of the cleaned,
 // absolute pluginRoot path, so distinct sync targets never contend and
@@ -43,7 +43,7 @@ func acquireLock(registryDir, pluginRoot string) (release func(), err error) {
 		}
 
 		if !reclaimStaleLock(lockPath) {
-			return nil, fmt.Errorf("a sync-skills run is already in progress for %s (lock file %s); wait for it to finish, or remove the lock file if you're sure it's stale", pluginRoot, lockPath)
+			return nil, fmt.Errorf("a skills sync run is already in progress for %s (lock file %s); wait for it to finish, or remove the lock file if you're sure it's stale", pluginRoot, lockPath)
 		}
 
 		if f, err = os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644); err != nil {

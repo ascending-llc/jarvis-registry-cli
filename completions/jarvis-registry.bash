@@ -4,7 +4,7 @@ _jarvis_registry_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
-        COMPREPLY=( $(compgen -W "-v --version -h --help auth configure sync-skills" -- "$cur") )
+        COMPREPLY=( $(compgen -W "-v --version -h --help auth configure skills" -- "$cur") )
         return 0
     fi
 
@@ -19,16 +19,28 @@ _jarvis_registry_complete() {
         configure)
             COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
             ;;
-        sync-skills)
-            case "$cur" in
-                -*)
-                    COMPREPLY=( $(compgen -W "-h --help --mode" -- "$cur") )
+        skills)
+            case "${COMP_WORDS[2]}" in
+                sync)
+                    case "$cur" in
+                        -*)
+                            COMPREPLY=( $(compgen -W "-h --help --mode" -- "$cur") )
+                            ;;
+                        *)
+                            if [ "${COMP_WORDS[COMP_CWORD-1]}" = "--mode" ]; then
+                                COMPREPLY=( $(compgen -W "claude codex copilot" -- "$cur") )
+                            else
+                                COMPREPLY=( $(compgen -d -- "$cur") )
+                            fi
+                            ;;
+                    esac
+                    ;;
+                show)
+                    COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
                     ;;
                 *)
-                    if [ "${COMP_WORDS[COMP_CWORD-1]}" = "--mode" ]; then
-                        COMPREPLY=( $(compgen -W "claude codex copilot" -- "$cur") )
-                    else
-                        COMPREPLY=( $(compgen -d -- "$cur") )
+                    if [ "$COMP_CWORD" -eq 2 ]; then
+                        COMPREPLY=( $(compgen -W "sync show -h --help" -- "$cur") )
                     fi
                     ;;
             esac

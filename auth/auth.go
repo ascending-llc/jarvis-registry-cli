@@ -49,7 +49,7 @@ type (
 
 const (
 	// ScopeSkillsRead grants read access to skills.SyncCommand's
-	// sync-skills operations.
+	// skills sync operations.
 	ScopeSkillsRead = "skills-read"
 
 	// jarvisRegistryService is the Keychain "service" namespace prefix for

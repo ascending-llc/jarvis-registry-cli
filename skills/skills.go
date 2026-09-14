@@ -40,7 +40,7 @@ type (
 		GetAccessToken() (string, error)
 	}
 
-	// SyncCommand implements the "sync-skills" subcommand: it reconciles
+	// SyncCommand implements the "skills sync" subcommand: it reconciles
 	// the local skills folder against the skills available to the
 	// caller on the Registry, creating, updating, and deleting local
 	// skill folders as needed.
@@ -199,7 +199,7 @@ func (c *SyncCommand) AfterApply() (err error) {
 	}
 
 	if c.mode != cfg.SkillsModeClaude && strings.TrimSpace(c.ProjectPath) == "" {
-		return fmt.Errorf("a project directory is required in %s mode; pass one, e.g. `jarvis-registry sync-skills . --mode %s`", c.mode, c.mode)
+		return fmt.Errorf("a project directory is required in %s mode; pass one, e.g. `jarvis-registry skills sync . --mode %s`", c.mode, c.mode)
 	}
 
 	resolvedProjectPath, err := resolveProjectPath(c.ProjectPath)

@@ -44,7 +44,7 @@ Run these once, in order:
    Registry. The resulting credentials are cached in your OS keyring (Keychain, Windows Credential
    Manager, etc.) — never written to disk in plain text. Re-running it is a no-op once a valid
    session is cached.
-3. `jarvis-registry sync-skills [path]` — pulls the skills you have access to on the Registry down to
+3. `jarvis-registry skills sync [path]` — pulls the skills you have access to on the Registry down to
    your machine.
 
 Run `jarvis-registry --help` or `jarvis-registry <command> --help` at any point for the full flag
@@ -52,7 +52,7 @@ reference.
 
 ## Skill sync modes
 
-`sync-skills` targets one of three AI coding agents, selected via `local.skills.mode` in config or
+`skills sync` targets one of three AI coding agents, selected via `local.skills.mode` in config or
 the `--mode` flag (the flag wins when both are set):
 
 | Mode     | Destination folder                                  | Scope                        | Skill invocation           |
@@ -75,11 +75,14 @@ refuse to target your home directory.
 | `registry.base_url`       | `configure`                    | yes      | Registry API origin (scheme + host only, e.g. `https://registry.acme.example.com`).                             |
 | `registry.auth_base_url`  | hand-edit                      | no       | Overrides the OAuth origin if it differs from `base_url`. Only needed for local Registry development.           |
 | `local.skills.mode`       | `configure`                    | see above| Default sync mode (`claude`, `codex`, or `copilot`), used when `--mode` isn't passed.                            |
-| `local.skills.skip_ids`   | hand-edit                      | no       | Registry skill `Id`s (not names) that `sync-skills` should never create, update, or keep synced locally.        |
+| `local.skills.skip_ids`   | hand-edit                      | no       | Registry skill `Id`s (not names) that `skills sync` should never create, update, or keep synced locally.        |
 
 `local.skills.skip_ids` is useful if you already maintain a personal copy of a skill you've since
 published to the Registry under a different name — add its Registry `Id` here to keep only your
 personal copy in sync and skip the duplicate.
+
+Run `jarvis-registry skills show` to print the resolved `local.skills.mode` and
+`local.skills.skip_ids` values without opening the config file directly.
 
 ## Authentication
 
@@ -92,23 +95,23 @@ personal copy in sync and skip the duplicate.
 ## Syncing skills
 
 ```
-jarvis-registry sync-skills [<project-path>] [--mode claude|codex|copilot]
+jarvis-registry skills sync [<project-path>] [--mode claude|codex|copilot]
 ```
 
 Examples:
 
 ```
 # Claude Code, personal scope (into ~/.claude/skills/jarvis-registry/)
-jarvis-registry sync-skills --mode claude
+jarvis-registry skills sync --mode claude
 
 # Claude Code, project scope
-jarvis-registry sync-skills --mode claude .
+jarvis-registry skills sync --mode claude .
 
 # Codex — project directory is required
-jarvis-registry sync-skills --mode codex .
+jarvis-registry skills sync --mode codex .
 
 # GitHub Copilot — project directory is required
-jarvis-registry sync-skills --mode copilot .
+jarvis-registry skills sync --mode copilot .
 ```
 
 Each run reconciles your local skills folder against what's currently available to you on the
