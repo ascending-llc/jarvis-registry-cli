@@ -44,7 +44,7 @@ type (
 	// the local skills folder against the skills available to the
 	// caller on the Registry, creating, updating, and deleting local
 	// skill folders as needed.
-	SyncCommand struct {
+	SyncCommand struct { //nolint:govet // fieldalignment: keep the exported CLI arguments first and related configuration fields together.
 		// ProjectPath is the directory skills are synced under. For claude
 		// mode this is <ProjectPath>/.claude/skills/jarvis-registry/; for
 		// codex and copilot it is <ProjectPath>/.agents/skills/ and
@@ -69,6 +69,7 @@ type (
 		destDir        string
 		authBaseUrl    string
 		baseUrl        string
+		skipIds        []string
 		tempDir        string
 		userHomeDir    string
 		mrw            ManifestReadWriter
@@ -107,6 +108,12 @@ type (
 		Changed  bool
 	}
 
+	// skippedSkill is a remote skill Run will not sync, together with why.
+	skippedSkill struct {
+		Reason string
+		Metadata
+	}
+
 	// summaryRow is one row of the sync summary table Run prints when it
 	// finishes.
 	summaryRow struct {
@@ -142,6 +149,10 @@ const (
 	// files are pointers into Chat's external storage adapter that Jarvis
 	// Registry cannot read, so the CLI cannot sync it.
 	chatOwnedFilesSkippedNote = "not synced: supporting files were created in Jarvis Chat and are not readable from Jarvis Registry"
+
+	// userSkippedNote is the Notes value for a Skipped summary row describing
+	// a skill the caller explicitly excluded in the local CLI configuration.
+	userSkippedNote = "skipped: configured in local.skills.skip_ids"
 
 	// recreatedNote is the Notes value for an Updated summary row whose
 	// recorded LocalVersion and RemoteVersion already agreed — Changed is
@@ -205,6 +216,8 @@ func (c *SyncCommand) AfterApply() (err error) {
 	c.baseUrl = config.Registry.BaseUrl
 
 	c.authBaseUrl = config.Registry.AuthBaseUrl
+
+	c.skipIds = config.Local.Skills.SkipIds
 
 	c.tp = auth.NewRegistryTokenResolver(c.authBaseUrl, auth.RegistryScopes, c.logger)
 
@@ -390,10 +403,13 @@ func (c *SyncCommand) Run() (err error) {
 		}
 	}
 
-	// set aside multi-file skills created in Jarvis Chat, which cannot be
-	// synced (their supporting files are not readable from Registry); they
-	// are reported only via the summary's Skipped group.
-	eligibleSkills, skippedSkills := partitionSkippableSkills(remoteSkills)
+	// Set aside remote skills this run must not sync. They are reported only
+	// via the summary's Skipped group and never reach the content endpoint.
+	eligibleSkills, skippedSkills, unmatchedSkipIds := partitionSkippableSkills(remoteSkills, c.skipIds)
+
+	if len(unmatchedSkipIds) > 0 {
+		c.stderrLogger.Printf("warning: local.skills.skip_ids lists %d id(s) that don't match any skill currently available to you (check for a typo, revoked access, or a skill Name pasted where an Id belongs): %s", len(unmatchedSkipIds), strings.Join(unmatchedSkipIds, ", "))
+	}
 
 	// compare local and remote and categorize skills
 	toDelete, toUpdate, toCreate := c.getSyncSpecs(localSkills, eligibleSkills)
@@ -402,7 +418,7 @@ func (c *SyncCommand) Run() (err error) {
 	// because skill name is bound to a local folder name. Once toDelete are deleted and toUpdate get folder names updated to
 	// the remote skill names, the server guarantees that there is no name conflict among remote skills returned by ListSkills.
 	if err = c.deleteMany(toDelete); err != nil {
-		return fmt.Errorf("failed to delete certain skills that user no longer has access to: %s", err.Error())
+		return fmt.Errorf("failed to delete skills no longer in the desired local state: %s", err.Error())
 	}
 
 	// stageOne (fanned out below) never writes into destDir under a skill's
@@ -438,23 +454,43 @@ func (c *SyncCommand) Run() (err error) {
 	return errors.Join(joinErrors(updateOutcomes), joinErrors(createOutcomes))
 }
 
-// partitionSkippableSkills splits remote into skills this run will sync
-// (single-file, or multi-file and created by Registry) and skills it will
-// not (multi-file, created in Jarvis Chat — their supporting files are
-// pointers into Chat's external storage adapter, which Registry cannot
-// read). A skipped skill never reaches getSyncSpecs, so it can never
-// become a toCreate/toUpdate spec: it is reported only via the sync
-// summary's Skipped group.
-func partitionSkippableSkills(remote []Metadata) (eligible, skipped []Metadata) {
+// partitionSkippableSkills splits remote into skills this run will sync and
+// skills it will not, carrying the reason for each skip. Chat-owned multi-file
+// skills take precedence over user-configured skips because removing the
+// latter cannot make their supporting files readable from Registry. It also
+// returns configured Ids that matched no remote skill. skipIds is expected to
+// have already been trimmed and de-duplicated by cfg.Load.
+func partitionSkippableSkills(remote []Metadata, skipIds []string) (eligible []Metadata, skipped []skippedSkill, unmatched []string) {
+	skipSet := make(map[string]struct{}, len(skipIds))
+	for _, id := range skipIds {
+		skipSet[id] = struct{}{}
+	}
+
+	matched := make(map[string]struct{}, len(skipIds))
+
 	for _, m := range remote {
-		if m.FileCount > 0 && !m.CreatedByRegistry {
-			skipped = append(skipped, m)
-		} else {
+		_, userSkip := skipSet[m.Id]
+		if userSkip {
+			matched[m.Id] = struct{}{}
+		}
+
+		switch {
+		case m.FileCount > 0 && !m.CreatedByRegistry:
+			skipped = append(skipped, skippedSkill{Metadata: m, Reason: chatOwnedFilesSkippedNote})
+		case userSkip:
+			skipped = append(skipped, skippedSkill{Metadata: m, Reason: userSkippedNote})
+		default:
 			eligible = append(eligible, m)
 		}
 	}
 
-	return eligible, skipped
+	for _, id := range skipIds {
+		if _, ok := matched[id]; !ok {
+			unmatched = append(unmatched, id)
+		}
+	}
+
+	return eligible, skipped, unmatched
 }
 
 // succeededOnly returns the Metadata of every outcome whose SyncFn call
@@ -857,7 +893,7 @@ func (c *SyncCommand) deleteMany(specs []SyncSpec) error {
 // condition Claude Code's docs confirm needs a new session, decoupled from
 // whether c.destDir itself happened to already exist; for codex/copilot it
 // tracks the manifest's own first appearance in the destination.
-func (c *SyncCommand) printSummary(firstTime bool, toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec, skipped []Metadata) {
+func (c *SyncCommand) printSummary(firstTime bool, toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec, skipped []skippedSkill) {
 	if firstTime {
 		switch c.mode {
 		case cfg.SkillsModeClaude:
@@ -888,7 +924,7 @@ func (c *SyncCommand) printSummary(firstTime bool, toCreate []SyncSpec, createOu
 // toCreate, toUpdate, and toDelete plus one per skipped skill, grouped by
 // status in the order Created, Updated, Unchanged, Removed, Failed,
 // Skipped, and sorted alphabetically by skill name within each group.
-func (c *SyncCommand) buildSummaryRows(toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec, skipped []Metadata) [][]string {
+func (c *SyncCommand) buildSummaryRows(toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec, skipped []skippedSkill) [][]string {
 	var created, updated, unchanged, removed, failed, skippedRows []summaryRow
 
 	for i, spec := range toCreate {
@@ -919,8 +955,8 @@ func (c *SyncCommand) buildSummaryRows(toCreate []SyncSpec, createOutcomes []Syn
 		removed = append(removed, summaryRow{Skill: spec.LocalName, Status: statusRemoved, Previous: strconv.Itoa(spec.LocalVersion), Current: "-"})
 	}
 
-	for _, m := range skipped {
-		skippedRows = append(skippedRows, summaryRow{Skill: m.Name, Status: statusSkipped, Previous: "-", Current: strconv.Itoa(m.Version), Notes: chatOwnedFilesSkippedNote})
+	for _, s := range skipped {
+		skippedRows = append(skippedRows, summaryRow{Skill: s.Name, Status: statusSkipped, Previous: "-", Current: strconv.Itoa(s.Version), Notes: s.Reason})
 	}
 
 	groups := [][]summaryRow{created, updated, unchanged, removed, failed, skippedRows}

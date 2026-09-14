@@ -1,0 +1,8 @@
+registry:
+  base_url: https://example.com/
+local:
+  skills:
+    skip_ids:
+      - "  skill-id-1  "
+      - "not-an-object-id"
+      - "skill-id-1"

@@ -29,10 +29,16 @@ type (
 			AuthBaseUrl string `mapstructure:"auth_base_url"`
 		} `mapstructure:"registry"`
 
-		// Local holds settings for how the CLI manages files on the local
-		// machine, as opposed to how it talks to the Registry.
+		// Local holds settings that configure this machine's own CLI
+		// behavior, as opposed to anything about the Registry server itself.
 		Local struct {
-			Skills struct {
+			// Skills holds settings specific to the sync-skills subcommand.
+			Skills struct { //nolint:govet // fieldalignment: keep SkipIds and Mode in the order they were introduced, each with its own doc comment, rather than let the fixer collapse them into an undocumented, alignment-packed block — the two fields are both 8-byte-aligned (SkillsMode is a defined string type), so no padding is ever saved by reordering them.
+				// SkipIds lists skill Ids that sync-skills must never create,
+				// update, or keep synced locally, even when the caller has
+				// Registry access.
+				SkipIds []string `mapstructure:"skip_ids"`
+
 				// Mode selects the skills-directory convention sync-skills
 				// targets. Empty means unset — cfg.Load does not default it,
 				// so sync-skills can distinguish "never configured" from any
@@ -83,8 +89,9 @@ func (m SkillsMode) Valid() bool {
 
 // Load reads config.yaml (or config.yml) from registryDir, unmarshals it
 // into a Config, and validates and resolves its fields — normalizing
-// Registry.BaseUrl and defaulting Registry.AuthBaseUrl to Registry.BaseUrl
-// when it isn't set. It returns an error if neither file exists, the file
+// Registry.BaseUrl and Local.Skills.SkipIds, defaulting Registry.AuthBaseUrl
+// to Registry.BaseUrl when it isn't set, and validating Local.Skills.Mode
+// when it's set. It returns an error if neither file exists, the file
 // cannot be parsed, or validation fails.
 func Load(registryDir string) (config Config, err error) {
 	v := viper.New()
@@ -118,6 +125,11 @@ func Load(registryDir string) (config Config, err error) {
 		return config, fmt.Errorf("invalid registry.auth_base_url in %s: %s", path, err.Error())
 	}
 
+	config.Local.Skills.SkipIds, err = normalizeSkipIds(config.Local.Skills.SkipIds)
+	if err != nil {
+		return config, fmt.Errorf("invalid local.skills.skip_ids in %s: %s", path, err.Error())
+	}
+
 	// Validate the skills mode only when it's set: a config file predating
 	// this field (or one deliberately leaving it to be supplied via --mode)
 	// must still load. No default is applied — an absent mode stays absent
@@ -127,6 +139,35 @@ func Load(registryDir string) (config Config, err error) {
 	}
 
 	return config, nil
+}
+
+// normalizeSkipIds trims surrounding whitespace from every configured skill
+// Id and removes duplicates while preserving the first occurrence's position.
+// It returns nil for an empty input and rejects entries that are empty after
+// trimming.
+func normalizeSkipIds(raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+
+	seen := make(map[string]struct{}, len(raw))
+	normalized := make([]string, 0, len(raw))
+
+	for i, id := range raw {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil, fmt.Errorf("entry %d is empty", i)
+		}
+
+		if _, ok := seen[id]; ok {
+			continue
+		}
+
+		seen[id] = struct{}{}
+		normalized = append(normalized, id)
+	}
+
+	return normalized, nil
 }
 
 // resolveConfigPath returns the existing config.yaml or config.yml path in
