@@ -9,7 +9,7 @@ description: Sync the latest Jarvis Registry skills into GitHub Copilot from you
 |----------|-------------|
 | `$path` | The project directory (absolute, relative, or "."/"this directory"/"current directory") to sync skills into. Required. |
 
-Run `jarvis-registry sync-skills $path --mode copilot`, substituting `$path` verbatim (not the
+Run `jarvis-registry skills sync $path --mode copilot`, substituting `$path` verbatim (not the
 literal text `$path`).
 
 If it fails because the user isn't authenticated, tell them to run `jarvis-registry auth login`
@@ -18,7 +18,7 @@ itself never opens a browser or starts a login flow; it only ever reads an alrea
 credential and fails loudly if none exists.
 
 If it fails because the destination folder exists but wasn't created by this CLI, tell the user
-to run `jarvis-registry sync-skills $path --mode copilot` themselves from a real terminal once, to
+to run `jarvis-registry skills sync $path --mode copilot` themselves from a real terminal once, to
 confirm it's safe for the CLI to manage that folder.
 
 After a successful sync, report the Markdown table from the command's output — which skills were

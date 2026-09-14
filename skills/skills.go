@@ -199,7 +199,7 @@ func (c *SyncCommand) AfterApply() (err error) {
 	}
 
 	if c.mode != cfg.SkillsModeClaude && strings.TrimSpace(c.ProjectPath) == "" {
-		return fmt.Errorf("a project directory is required in %s mode; pass one, e.g. `jarvis-registry sync-skills . --mode %s`", c.mode, c.mode)
+		return fmt.Errorf("a project directory is required in %s mode; pass one, e.g. `jarvis-registry skills sync . --mode %s`", c.mode, c.mode)
 	}
 
 	resolvedProjectPath, err := resolveProjectPath(c.ProjectPath)
