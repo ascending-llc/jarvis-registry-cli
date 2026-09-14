@@ -215,6 +215,16 @@ func TestSyncCommandAfterApplyModeResolution(t *testing.T) {
 		assert.Contains(t, err.Error(), "does not support syncing into the user's home directory", "the error should explain the refusal")
 	})
 
+	t.Run("codex refuses a symlink that resolves to the home directory", func(t *testing.T) {
+		home := t.TempDir()
+		link := filepath.Join(t.TempDir(), "homelink")
+		require.NoError(t, os.Symlink(home, link), "should be able to create a symlink to the home directory")
+
+		_, err := afterApplyForMode(t, home, link, "codex", "")
+		require.Error(t, err, "codex mode must refuse a symlinked path that resolves to home")
+		assert.Contains(t, err.Error(), "does not support syncing into the user's home directory", "the error should explain the refusal")
+	})
+
 	t.Run("claude still defaults to the home directory when no path is given", func(t *testing.T) {
 		// An empty ProjectPath resolves against os.UserHomeDir (personal
 		// scope), independent of the command's own userHomeDir field.
@@ -331,6 +341,38 @@ func TestSyncCommandRunCodexAndCopilot(t *testing.T) {
 
 			assert.NoDirExists(t, foreign, "an untracked foreign entry should be deleted by the second sync")
 			assert.FileExists(t, manifestPath, "the manifest must not be deleted by a subsequent sync")
+		})
+	}
+}
+
+func TestSyncCommandRunRejectsManifestFilenameSkill(t *testing.T) {
+	// A Registry skill named like the manifest file would collide with the
+	// manifest path in codex/copilot mode (manifest lives directly in
+	// destDir there). Verify it is rejected during remote-name validation,
+	// case-insensitively, before any collision can occur.
+	for _, name := range []string{manifestFileName, "SKILL-LOCK.JSON"} {
+		t.Run(name, func(t *testing.T) {
+			listBody, err := json.Marshal(ListResponse{Skills: []Metadata{{Id: "skill-1", Name: name, Version: 1}}})
+			require.NoError(t, err)
+
+			mux := http.NewServeMux()
+			mux.HandleFunc(fmt.Sprintf("GET %s/api/v1/skills", registryBasePath), func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write(listBody)
+			})
+
+			ts := httptest.NewServer(mux)
+			defer ts.Close()
+
+			cmd := buildModeCmd(t, ts, t.TempDir(), cfg.SkillsModeCodex)
+
+			var buf bytes.Buffer
+
+			cmd.logger = log.New(&buf, "", 0)
+			cmd.stderrLogger = log.New(&buf, "", 0)
+
+			err = cmd.Run()
+			require.Error(t, err, "a remote skill named like the manifest file must be rejected")
+			assert.Contains(t, err.Error(), "reserved for this CLI's own sync manifest", "the error should name why it was rejected")
 		})
 	}
 }

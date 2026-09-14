@@ -43,7 +43,7 @@ func (c *SyncCommand) ensureSyncRootConsent() error {
 	}
 
 	if !c.isTerminal() {
-		return fmt.Errorf("%s exists but was not created by jarvis-registry-cli (no valid skill-lock.json marker found).%s Refusing to modify it non-interactively. Run `jarvis-registry sync-skills` from an interactive terminal to confirm, or remove the folder manually", c.syncRoot, warning)
+		return fmt.Errorf("%s exists but was not created by jarvis-registry-cli (no valid skill-lock.json marker found).%s Refusing to modify it non-interactively. Re-run the same sync-skills command (with the same project path and --mode) from an interactive terminal to confirm, or remove the folder manually", c.syncRoot, warning)
 	}
 
 	fmt.Fprintf(os.Stderr, "%s exists but was not created by jarvis-registry-cli.%s Proceed and manage it? [y/N] ", c.syncRoot, warning)

@@ -196,11 +196,7 @@ func (c *SyncCommand) AfterApply() (err error) {
 		return fmt.Errorf("invalid project path %q: %s", c.ProjectPath, err.Error())
 	}
 
-	// resolvedProjectPath is already absolute and Clean'd (filepath.Abs);
-	// Clean c.userHomeDir too so a non-canonical $HOME (e.g. a trailing
-	// slash) can't slip the personal-scope refusal. Symlinked homes are
-	// still backed by the consent gate.
-	if c.mode != cfg.SkillsModeClaude && resolvedProjectPath == filepath.Clean(c.userHomeDir) {
+	if c.mode != cfg.SkillsModeClaude && isHomeDir(resolvedProjectPath, c.userHomeDir) {
 		return fmt.Errorf("%s mode does not support syncing into the user's home directory (personal scope); pass a project directory", c.mode)
 	}
 
@@ -234,6 +230,23 @@ func resolveSkillsMode(flagValue string, configValue cfg.SkillsMode) (cfg.Skills
 	}
 
 	return "", errors.New("no sync mode resolved: pass --mode, or set local.skills.mode via `jarvis-registry configure`")
+}
+
+// isHomeDir reports whether projectPath is the user's home directory. It
+// first compares the two lexically (Clean'd), which also covers a
+// projectPath that doesn't exist yet — such a path can't be home. It then
+// compares by file identity via os.SameFile (os.Stat follows symlinks), so a
+// symlink or other alternate path resolving to home can't slip the
+// personal-scope refusal that gates codex/copilot.
+func isHomeDir(projectPath, homeDir string) bool {
+	if filepath.Clean(projectPath) == filepath.Clean(homeDir) {
+		return true
+	}
+
+	projectInfo, projectErr := os.Stat(projectPath)
+	homeInfo, homeErr := os.Stat(homeDir)
+
+	return projectErr == nil && homeErr == nil && os.SameFile(projectInfo, homeInfo)
 }
 
 // destinationsForMode returns the directory that owns skill-lock.json and
@@ -357,8 +370,12 @@ func (c *SyncCommand) Run() (err error) {
 
 	// reject any remote skill name that is unsafe to use as a filesystem
 	// path component, that would corrupt the Markdown sync summary table,
-	// or that collides with this CLI's own reserved wrapper skill name,
-	// before it reaches any os.* call
+	// or that collides with one of this CLI's own reserved entries — its
+	// wrapper skill folder, or (for codex/copilot, where the manifest lives
+	// directly inside destDir) the skill-lock.json manifest file — before it
+	// reaches any os.* call. Both reservations are matched case-insensitively
+	// because a Registry name's casing is uncontrolled and the destination
+	// filesystem may itself be case-insensitive.
 	for _, r := range remoteSkills {
 		if !isSafeSkillName(r.Name) {
 			return fmt.Errorf("remote skill %s (id %s) has a name that is unsafe to use as a filesystem path or in the sync summary table", r.Name, r.Id)
@@ -366,6 +383,10 @@ func (c *SyncCommand) Run() (err error) {
 
 		if strings.EqualFold(r.Name, reservedSyncSkillsName) {
 			return fmt.Errorf("remote skill %s (id %s) is named %q, which is reserved for this CLI's own wrapper skill", r.Name, r.Id, reservedSyncSkillsName)
+		}
+
+		if strings.EqualFold(r.Name, manifestFileName) {
+			return fmt.Errorf("remote skill %s (id %s) is named %q, which is reserved for this CLI's own sync manifest", r.Name, r.Id, manifestFileName)
 		}
 	}
 
