@@ -12,7 +12,7 @@ arguments: [path]
 |----------|-------------|
 | `$path` | Optional project directory (absolute, relative, or "."/"this directory"/"current directory") to sync skills into. Omit if the user didn't specify one. |
 
-If the user specified a project directory, run `jarvis-registry skills sync $path --mode claude`,
+If the user specified a project directory, run `jarvis-registry skills sync --mode claude $path`,
 substituting `$path` verbatim (not the literal text `$path`). Otherwise, run
 `jarvis-registry skills sync --mode claude` with no path argument at all.
 
