@@ -79,8 +79,9 @@ func TestLoadPreservesReadErrorBehavior(t *testing.T) {
 
 func TestLoadInvalid(t *testing.T) {
 	cases := []struct {
-		name        string
-		wantErrText string
+		name            string
+		wantErrText     string
+		wantErrContains []string
 	}{
 		{name: "invalid-http-scheme-url", wantErrText: "scheme must be https"},
 		{name: "invalid-http-localhost-lookalike-host", wantErrText: "scheme must be https"},
@@ -88,7 +89,7 @@ func TestLoadInvalid(t *testing.T) {
 		{name: "invalid-empty-url", wantErrText: "URL must not be empty"},
 		{name: "invalid-no-host-url", wantErrText: "must include a host"},
 		{name: "invalid-malformed-url", wantErrText: "not a valid URL"},
-		{name: "invalid-empty-skip-id-entry", wantErrText: "invalid local.skills.skip_ids"},
+		{name: "invalid-empty-skip-id-entry", wantErrText: "invalid local.skills.skip_ids", wantErrContains: []string{filepath.Join("testdata", "invalid-empty-skip-id-entry", "config.yaml"), "entry 1 is empty"}},
 	}
 
 	for _, c := range cases {
@@ -97,9 +98,8 @@ func TestLoadInvalid(t *testing.T) {
 			require.Error(t, err, "Load should reject an invalid config")
 			assert.Contains(t, err.Error(), c.wantErrText, "error message should explain why the config is invalid")
 
-			if c.name == "invalid-empty-skip-id-entry" {
-				assert.Contains(t, err.Error(), filepath.Join("testdata", c.name, "config.yaml"), "skip_ids errors should name the config file")
-				assert.Contains(t, err.Error(), "entry 1 is empty", "skip_ids errors should identify the offending entry")
+			for _, want := range c.wantErrContains {
+				assert.Contains(t, err.Error(), want, "error message should also contain %q", want)
 			}
 		})
 	}

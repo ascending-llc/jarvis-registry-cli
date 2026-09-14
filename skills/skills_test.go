@@ -929,6 +929,88 @@ func TestSyncCommandRunUserSkipList(t *testing.T) {
 	})
 }
 
+// TestSyncCommandRunUserSkipListCodexAndCopilot covers the two
+// local.skills.skip_ids behaviors that actually depend on destDir/syncRoot
+// resolution (destDir differs from syncRoot only under claude mode; codex
+// and copilot use a single flat directory for both). partitionSkippableSkills
+// itself is mode-independent and already covered — via TestPartitionSkippableSkills
+// and TestSyncCommandRunUserSkipList's unmatched-id and chat-owned-precedence
+// subtests — so it is not re-verified per mode here.
+func TestSyncCommandRunUserSkipListCodexAndCopilot(t *testing.T) {
+	const (
+		id   = "mode-skip-1"
+		name = "mode-skipped-skill"
+	)
+
+	content := Content{Description: "a user-skipped skill", Body: "Some body.\n"}
+
+	cases := []struct {
+		mode   cfg.SkillsMode
+		subdir []string
+	}{
+		{mode: cfg.SkillsModeCodex, subdir: []string{".agents", "skills"}},
+		{mode: cfg.SkillsModeCopilot, subdir: []string{".github", "skills"}},
+	}
+
+	for _, c := range cases {
+		t.Run(string(c.mode), func(t *testing.T) {
+			t.Run("never-synced skill is skipped without fetching content", func(t *testing.T) {
+				ts, contentRequested := newSingleSkillTestServer(t, id, name, 2, content, false)
+				project := t.TempDir()
+				destDir := filepath.Join(append([]string{project}, c.subdir...)...)
+
+				cmd := buildModeCmd(t, ts, project, c.mode)
+				cmd.skipIds = []string{id}
+
+				var stdout, stderr bytes.Buffer
+
+				cmd.logger = log.New(&stdout, "", 0)
+				cmd.stderrLogger = log.New(&stderr, "", 0)
+
+				err := cmd.Run()
+				require.NoError(t, err, "Run should succeed when an available skill is configured to be skipped under %s mode", c.mode)
+				assert.False(t, *contentRequested, "get_skill_content should never be requested for a configured skip")
+				assert.Empty(t, stderr.String(), "a matched skip id should not produce an unmatched warning")
+
+				_, statErr := os.Stat(filepath.Join(destDir, name))
+				assert.True(t, errors.Is(statErr, fs.ErrNotExist), "a configured skip should not be created locally under %s mode", c.mode)
+
+				rows := parseMarkdownSummaryRows(t, stdout.String())
+				assertSummaryRow(t, rows, name, statusSkipped, "-", "2", userSkippedNote)
+			})
+
+			t.Run("previously-synced skill is removed and remains visibly skipped", func(t *testing.T) {
+				ts, contentRequested := newSingleSkillTestServer(t, id, name, 2, content, false)
+				project := t.TempDir()
+				destDir := filepath.Join(append([]string{project}, c.subdir...)...)
+
+				cmd := buildModeCmd(t, ts, project, c.mode)
+
+				writeSingleSkillManifest(t, cmd.syncRoot, id, name, 1)
+				require.NoError(t, os.MkdirAll(filepath.Join(destDir, name), 0755), "should be able to create the previously-synced skill folder")
+				require.NoError(t, os.WriteFile(filepath.Join(destDir, name, "SKILL.md"), []byte("old content\n"), 0644), "should be able to seed the previously-synced skill content")
+
+				cmd.skipIds = []string{id}
+
+				var stdout bytes.Buffer
+
+				cmd.logger = log.New(&stdout, "", 0)
+
+				err := cmd.Run()
+				require.NoError(t, err, "Run should succeed removing a newly skiplisted local skill under %s mode", c.mode)
+				assert.False(t, *contentRequested, "a newly skiplisted local skill should be removed without fetching remote content")
+
+				_, statErr := os.Stat(filepath.Join(destDir, name))
+				assert.True(t, errors.Is(statErr, fs.ErrNotExist), "the previously-synced skill folder should be deleted under %s mode", c.mode)
+
+				rows := parseMarkdownSummaryRows(t, stdout.String())
+				assertSummaryRow(t, rows, name, statusRemoved, "1", "-", "")
+				assertSummaryRow(t, rows, name, statusSkipped, "-", "2", userSkippedNote)
+			})
+		})
+	}
+}
+
 // TestSyncCommandRunFirstTimeBanner covers the first-time-sync banner:
 // present, followed by a blank line and the summary table, only on the
 // run where .claude-plugin/plugin.json did not already exist; absent on
