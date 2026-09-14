@@ -122,6 +122,7 @@ func TestSyncCommandAfterApply(t *testing.T) {
 
 				config.Registry.BaseUrl = c.baseUrl
 				config.Registry.AuthBaseUrl = c.authBaseUrl
+				config.Local.Skills.Mode = cfg.SkillsModeClaude
 
 				return config, nil
 			}
@@ -131,9 +132,205 @@ func TestSyncCommandAfterApply(t *testing.T) {
 
 			assert.Equal(t, c.baseUrl, cmd.baseUrl, "baseUrl should be taken from config.Registry.BaseUrl")
 			assert.Equal(t, c.wantAuthBaseUrl, cmd.authBaseUrl, "authBaseUrl should be taken from config.Registry.AuthBaseUrl, distinct from baseUrl when cfg.Load resolved it that way")
-			assert.Equal(t, filepath.Join(cmd.ProjectPath, ".claude", "skills", "jarvis-registry"), cmd.pluginRoot, "pluginRoot should be derived from ProjectPath")
+			assert.Equal(t, filepath.Join(cmd.ProjectPath, ".claude", "skills", "jarvis-registry"), cmd.syncRoot, "syncRoot should be derived from ProjectPath")
 
 			require.NotNil(t, cmd.tp, "tp should be initialized")
+		})
+	}
+}
+
+// afterApplyForMode runs BeforeReset + AfterApply for a command with the
+// given --mode flag, config mode, and project path, and returns the command
+// and AfterApply's error. userHomeDir is overridden to homeDir so the
+// personal-scope refusal can be exercised deterministically.
+func afterApplyForMode(t *testing.T, homeDir, projectPath, flagMode string, configMode cfg.SkillsMode) (SyncCommand, error) {
+	t.Helper()
+
+	cmd := SyncCommand{}
+	require.NoError(t, cmd.BeforeReset(), "BeforeReset should succeed")
+
+	cmd.userHomeDir = homeDir
+	cmd.ProjectPath = projectPath
+	cmd.Mode = flagMode
+	cmd.configLoadFunc = func(string) (cfg.Config, error) {
+		var config cfg.Config
+
+		config.Registry.BaseUrl = "https://registry.example.com"
+		config.Registry.AuthBaseUrl = "https://registry.example.com"
+		config.Local.Skills.Mode = configMode
+
+		return config, nil
+	}
+
+	return cmd, cmd.AfterApply()
+}
+
+func TestSyncCommandAfterApplyModeResolution(t *testing.T) {
+	t.Run("--mode flag overrides config and picks the destination", func(t *testing.T) {
+		project := t.TempDir()
+
+		cmd, err := afterApplyForMode(t, t.TempDir(), project, "codex", cfg.SkillsModeClaude)
+		require.NoError(t, err, "a valid --mode flag should override config")
+
+		assert.Equal(t, cfg.SkillsModeCodex, cmd.mode, "the flag should win over the config value")
+		assert.Equal(t, filepath.Join(project, ".agents", "skills"), cmd.syncRoot, "codex syncRoot should be <project>/.agents/skills")
+		assert.Equal(t, cmd.syncRoot, cmd.destDir, "codex syncRoot and destDir are the same flat directory")
+	})
+
+	t.Run("copilot destination", func(t *testing.T) {
+		project := t.TempDir()
+
+		cmd, err := afterApplyForMode(t, t.TempDir(), project, "", cfg.SkillsModeCopilot)
+		require.NoError(t, err, "config mode should be used when the flag is empty")
+
+		assert.Equal(t, cfg.SkillsModeCopilot, cmd.mode)
+		assert.Equal(t, filepath.Join(project, ".github", "skills"), cmd.syncRoot, "copilot syncRoot should be <project>/.github/skills")
+		assert.Equal(t, cmd.syncRoot, cmd.destDir)
+	})
+
+	t.Run("no mode resolved names both ways to fix it", func(t *testing.T) {
+		_, err := afterApplyForMode(t, t.TempDir(), t.TempDir(), "", "")
+		require.Error(t, err, "neither flag nor config mode should be a hard failure")
+		assert.Contains(t, err.Error(), "--mode", "the error should name the flag")
+		assert.Contains(t, err.Error(), "jarvis-registry configure", "the error should name the configure command")
+	})
+
+	t.Run("an invalid --mode flag is rejected", func(t *testing.T) {
+		_, err := afterApplyForMode(t, t.TempDir(), t.TempDir(), "vscode", "")
+		require.Error(t, err, "an unrecognized --mode should be rejected")
+		assert.Contains(t, err.Error(), `invalid --mode "vscode"`, "the error should name the offending value")
+	})
+
+	t.Run("codex without a project path fails, naming the mode", func(t *testing.T) {
+		_, err := afterApplyForMode(t, t.TempDir(), "", "codex", "")
+		require.Error(t, err, "codex mode requires a project directory")
+		assert.Contains(t, err.Error(), "a project directory is required in codex mode", "the error should name the mode")
+	})
+
+	t.Run("codex refuses the personal-scope home directory", func(t *testing.T) {
+		home := t.TempDir()
+
+		_, err := afterApplyForMode(t, home, home, "codex", "")
+		require.Error(t, err, "codex mode must refuse syncing into the home directory")
+		assert.Contains(t, err.Error(), "does not support syncing into the user's home directory", "the error should explain the refusal")
+	})
+
+	t.Run("claude still defaults to the home directory when no path is given", func(t *testing.T) {
+		// An empty ProjectPath resolves against os.UserHomeDir (personal
+		// scope), independent of the command's own userHomeDir field.
+		home, err := os.UserHomeDir()
+		require.NoError(t, err)
+
+		cmd, err := afterApplyForMode(t, t.TempDir(), "", "claude", "")
+		require.NoError(t, err, "claude mode keeps its personal-scope default")
+		assert.Equal(t, filepath.Join(home, ".claude", "skills", "jarvis-registry"), cmd.syncRoot)
+		assert.Equal(t, filepath.Join(cmd.syncRoot, "skills"), cmd.destDir, "claude destDir nests under syncRoot")
+	})
+}
+
+// buildModeCmd wires a ready-to-Run SyncCommand for mode against ts,
+// syncing into project, with a temp home and a stubbed config loader.
+func buildModeCmd(t *testing.T, ts *httptest.Server, project string, mode cfg.SkillsMode) SyncCommand {
+	t.Helper()
+
+	cmd := SyncCommand{}
+	require.NoError(t, cmd.BeforeReset(), "BeforeReset should succeed")
+
+	cmd.userHomeDir = t.TempDir()
+	cmd.ProjectPath = project
+	cmd.configLoadFunc = func(string) (cfg.Config, error) {
+		var config cfg.Config
+
+		config.Registry.BaseUrl = ts.URL
+		config.Registry.AuthBaseUrl = ts.URL
+		config.Local.Skills.Mode = mode
+
+		return config, nil
+	}
+
+	require.NoError(t, cmd.AfterApply(), "AfterApply should succeed")
+	require.NoError(t, os.MkdirAll(cmd.registryDir, 0755), "should be able to create the mock registry directory")
+
+	cmd.tp = MockTokenProvider{}
+
+	return cmd
+}
+
+func TestSyncCommandRunCodexAndCopilot(t *testing.T) {
+	meta := Metadata{Id: "skill-1", Name: "hello-skill", Version: 2}
+
+	listBody, err := json.Marshal(ListResponse{Skills: []Metadata{meta}})
+	require.NoError(t, err)
+
+	contentBody, err := json.Marshal(Content{Id: meta.Id, Name: meta.Name, Description: "A friendly hello skill.", Body: "Say hello."})
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc(fmt.Sprintf("GET %s/api/v1/skills", registryBasePath), func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(listBody)
+	})
+
+	mux.HandleFunc(fmt.Sprintf("GET %s/api/v1/skills/{skillId}/content", registryBasePath), func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(contentBody)
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	cases := []struct {
+		mode        cfg.SkillsMode
+		subdir      []string
+		wantWrapper []byte
+	}{
+		{mode: cfg.SkillsModeCodex, subdir: []string{".agents", "skills"}, wantWrapper: syncSkillsSkillContentCodex},
+		{mode: cfg.SkillsModeCopilot, subdir: []string{".github", "skills"}, wantWrapper: syncSkillsSkillContentCopilot},
+	}
+
+	for _, c := range cases {
+		t.Run(string(c.mode), func(t *testing.T) {
+			project := t.TempDir()
+			destDir := filepath.Join(append([]string{project}, c.subdir...)...)
+
+			cmd := buildModeCmd(t, ts, project, c.mode)
+
+			var buf bytes.Buffer
+
+			cmd.logger = log.New(&buf, "", 0)
+			cmd.stderrLogger = log.New(&buf, "", 0)
+
+			require.NoError(t, cmd.Run(), "the first sync should succeed")
+
+			// The skill is written directly into destDir, not nested under
+			// an intermediate skills/ folder.
+			assert.FileExists(t, filepath.Join(destDir, "hello-skill", "SKILL.md"), "the skill should be written directly into the mode's flat directory")
+			assert.NoDirExists(t, filepath.Join(destDir, "skills"), "codex/copilot must not nest skills under an intermediate folder")
+
+			// No plugin.json is created anywhere.
+			assert.NoDirExists(t, filepath.Join(project, ".claude"), "codex/copilot must not create a .claude subtree")
+			assert.NoDirExists(t, filepath.Join(destDir, ".claude-plugin"), "codex/copilot must not create a plugin manifest")
+
+			// skill-lock.json lives directly inside destDir.
+			manifestPath := filepath.Join(destDir, manifestFileName)
+			assert.FileExists(t, manifestPath, "the manifest should live directly inside the mode's flat directory")
+
+			// The wrapper skill matches this mode's embedded variant.
+			wrapper, readErr := os.ReadFile(filepath.Join(destDir, "sync-skills", "SKILL.md"))
+			require.NoError(t, readErr, "should be able to read the synced wrapper skill")
+			assert.Equal(t, string(c.wantWrapper), string(wrapper), "the wrapper content should be this mode's embedded variant")
+
+			assert.Contains(t, buf.String(), "First time skill sync into "+destDir, "the first-time banner should name the sync root")
+
+			// A foreign, untracked entry placed before a second sync is
+			// deleted, but the manifest is preserved.
+			foreign := filepath.Join(destDir, "foreign-skill")
+			require.NoError(t, os.MkdirAll(foreign, 0755), "should be able to plant a foreign skill folder")
+
+			cmd2 := buildModeCmd(t, ts, project, c.mode)
+			require.NoError(t, cmd2.Run(), "the second sync should succeed against the now-CLI-managed folder")
+
+			assert.NoDirExists(t, foreign, "an untracked foreign entry should be deleted by the second sync")
+			assert.FileExists(t, manifestPath, "the manifest must not be deleted by a subsequent sync")
 		})
 	}
 }
@@ -212,12 +409,12 @@ func TestSyncCommandRun(t *testing.T) {
 	t.Run("sync from non-trivial initial state", func(t *testing.T) {
 		cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
 
-		bootstrapPluginRoot(t, cmd.pluginRoot, mockSkillsDir)
+		bootstrapPluginRoot(t, cmd.syncRoot, mockSkillsDir)
 
 		initialManifest, err := os.ReadFile(filepath.Join("testdata", "initial-state.skill-lock.json"))
 		require.NoError(t, err, "should be able to read the initial-state skill-lock.json fixture")
 
-		err = os.WriteFile(filepath.Join(cmd.pluginRoot, manifestFileName), initialManifest, 0644)
+		err = os.WriteFile(filepath.Join(cmd.syncRoot, manifestFileName), initialManifest, 0644)
 		require.NoError(t, err, "should be able to write the initial manifest file to the mocked plugin root")
 
 		err = os.CopyFS(mockSkillsDir, os.DirFS(filepath.Join("testdata", "initial-state")))
@@ -230,7 +427,7 @@ func TestSyncCommandRun(t *testing.T) {
 		err = cmd.Run()
 		assertPartialFailure(t, err)
 
-		assertSyncResult(t, mockSkillsDir, cmd.pluginRoot)
+		assertSyncResult(t, mockSkillsDir, cmd.syncRoot)
 
 		assert.NotContains(t, buf.String(), "First time skill sync", "no banner should print when the plugin was already bootstrapped")
 
@@ -283,7 +480,7 @@ func TestSyncCommandRun(t *testing.T) {
 	t.Run("sync from empty initial state", func(t *testing.T) {
 		cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
 
-		bootstrapPluginRoot(t, cmd.pluginRoot, mockSkillsDir)
+		bootstrapPluginRoot(t, cmd.syncRoot, mockSkillsDir)
 
 		var buf bytes.Buffer
 
@@ -292,7 +489,7 @@ func TestSyncCommandRun(t *testing.T) {
 		err := cmd.Run()
 		assertPartialFailure(t, err)
 
-		assertSyncResult(t, mockSkillsDir, cmd.pluginRoot)
+		assertSyncResult(t, mockSkillsDir, cmd.syncRoot)
 
 		assert.NotContains(t, buf.String(), "First time skill sync", "no banner should print when the plugin was already bootstrapped")
 
@@ -472,7 +669,7 @@ func newSingleSkillTestServerFromMetadata(t *testing.T, meta Metadata, content C
 
 // writeSingleSkillManifest writes a manifest file recording exactly one
 // skill (id, name, localVersion), with a valid CLI-owned managedBy
-// marker so ensurePluginRootConsent proceeds silently, to pluginRoot,
+// marker so ensureSyncRootConsent proceeds silently, to pluginRoot,
 // creating pluginRoot first if necessary.
 func writeSingleSkillManifest(t *testing.T, pluginRoot, id, name string, localVersion int) {
 	t.Helper()
@@ -500,7 +697,7 @@ func writeSingleSkillManifest(t *testing.T, pluginRoot, id, name string, localVe
 // the CLI's current embedded content (so Run's first-time banner does
 // not fire), and a minimal skill-lock.json carrying the CLI's managedBy
 // marker and current syncSkillsVersion, with no skills recorded, so
-// ensurePluginRootConsent proceeds silently. Callers that need specific
+// ensureSyncRootConsent proceeds silently. Callers that need specific
 // local skills recorded overwrite the manifest file afterward — as long
 // as their fixture also carries the managedBy marker.
 func bootstrapPluginRoot(t *testing.T, pluginRoot, destDir string) {
@@ -549,7 +746,7 @@ func TestSyncCommandRunFirstTimeBanner(t *testing.T) {
 
 	lines := strings.Split(buf.String(), "\n")
 	require.GreaterOrEqual(t, len(lines), 3, "output should contain at least the banner sentence, a blank line, and the table header")
-	assert.Equal(t, fmt.Sprintf("First time skill sync. The %s plugin is created.", cmd.pluginRoot), lines[0], "the first line should be the first-time banner")
+	assert.Equal(t, fmt.Sprintf("First time skill sync. The %s plugin is created.", cmd.syncRoot), lines[0], "the first line should be the first-time banner")
 	assert.Empty(t, lines[1], "a blank line should follow the banner")
 	assert.Contains(t, lines[2], "Skill", "the summary table header should follow the blank line")
 
@@ -579,14 +776,14 @@ func TestSyncCommandRunSyncSkillsWrapperStableAcrossRuns(t *testing.T) {
 
 	firstContent, err := os.ReadFile(wrapperPath)
 	require.NoError(t, err, "the sync-skills wrapper should exist after the first Run")
-	assert.Equal(t, string(syncSkillsSkillContent), string(firstContent), "the wrapper's content should match the CLI's embedded content after the first Run")
+	assert.Equal(t, string(syncSkillsSkillContentClaude), string(firstContent), "the wrapper's content should match the CLI's embedded content after the first Run")
 
 	err = cmd.Run()
 	require.NoError(t, err, "the second Run should succeed")
 
 	secondContent, err := os.ReadFile(wrapperPath)
 	require.NoError(t, err, "the sync-skills wrapper should still exist after the second Run")
-	assert.Equal(t, string(syncSkillsSkillContent), string(secondContent), "the wrapper's content should still match the CLI's embedded content after the second Run")
+	assert.Equal(t, string(syncSkillsSkillContentClaude), string(secondContent), "the wrapper's content should still match the CLI's embedded content after the second Run")
 }
 
 // TestSyncCommandRunRewritesStaleSyncSkillsWrapper is the other risk
@@ -599,7 +796,7 @@ func TestSyncCommandRunRewritesStaleSyncSkillsWrapper(t *testing.T) {
 
 	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
 
-	bootstrapPluginRoot(t, cmd.pluginRoot, mockSkillsDir)
+	bootstrapPluginRoot(t, cmd.syncRoot, mockSkillsDir)
 
 	wrapperDir := filepath.Join(mockSkillsDir, reservedSyncSkillsName)
 	wrapperPath := filepath.Join(wrapperDir, "SKILL.md")
@@ -614,16 +811,16 @@ func TestSyncCommandRunRewritesStaleSyncSkillsWrapper(t *testing.T) {
 	body, err := json.Marshal(manifest)
 	require.NoError(t, err, "should be able to marshal the stale-version manifest fixture")
 
-	require.NoError(t, os.WriteFile(filepath.Join(cmd.pluginRoot, manifestFileName), body, 0644), "should be able to write the stale-version manifest fixture")
+	require.NoError(t, os.WriteFile(filepath.Join(cmd.syncRoot, manifestFileName), body, 0644), "should be able to write the stale-version manifest fixture")
 
 	err = cmd.Run()
 	require.NoError(t, err, "Run should succeed rewriting the stale wrapper")
 
 	rewritten, err := os.ReadFile(wrapperPath)
 	require.NoError(t, err, "the sync-skills wrapper should still exist after Run rewrites it")
-	assert.Equal(t, string(syncSkillsSkillContent), string(rewritten), "the stale wrapper content should have been rewritten to the CLI's current embedded content")
+	assert.Equal(t, string(syncSkillsSkillContentClaude), string(rewritten), "the stale wrapper content should have been rewritten to the CLI's current embedded content")
 
-	actualManifestBytes, err := os.ReadFile(filepath.Join(cmd.pluginRoot, manifestFileName))
+	actualManifestBytes, err := os.ReadFile(filepath.Join(cmd.syncRoot, manifestFileName))
 	require.NoError(t, err, "should be able to read skill-lock.json after Run")
 
 	var actualManifest ManifestV1
@@ -687,7 +884,7 @@ func TestSyncCommandRunRecreatesMissingFolder(t *testing.T) {
 
 	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
 
-	writeSingleSkillManifest(t, cmd.pluginRoot, "recreate-1", "test-skill", 1)
+	writeSingleSkillManifest(t, cmd.syncRoot, "recreate-1", "test-skill", 1)
 
 	// mockSkillsDir/test-skill is deliberately never created, simulating a
 	// folder deleted by hand between runs.
@@ -721,7 +918,7 @@ func TestSyncCommandRunLeavesUnchangedSkillUntouched(t *testing.T) {
 
 	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
 
-	writeSingleSkillManifest(t, cmd.pluginRoot, "unchanged-1", "test-skill", 1)
+	writeSingleSkillManifest(t, cmd.syncRoot, "unchanged-1", "test-skill", 1)
 
 	err := os.MkdirAll(filepath.Join(mockSkillsDir, "test-skill"), 0755)
 	require.NoError(t, err, "should be able to create the pre-existing skill folder")
@@ -757,7 +954,7 @@ func TestSyncCommandRunFailedUpdateLeavesOldFolderIntact(t *testing.T) {
 
 	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
 
-	writeSingleSkillManifest(t, cmd.pluginRoot, "fail-1", "test-skill", 1)
+	writeSingleSkillManifest(t, cmd.syncRoot, "fail-1", "test-skill", 1)
 
 	err := os.MkdirAll(filepath.Join(mockSkillsDir, "test-skill"), 0755)
 	require.NoError(t, err, "should be able to create the pre-existing skill folder")
@@ -796,7 +993,7 @@ func TestSyncCommandRunFailedUpdateOnAlreadyMissingFolder(t *testing.T) {
 
 	cmd, mockSkillsDir, _ := newTestSyncSetup(t, ts)
 
-	writeSingleSkillManifest(t, cmd.pluginRoot, "fail-missing-1", "test-skill", 1)
+	writeSingleSkillManifest(t, cmd.syncRoot, "fail-missing-1", "test-skill", 1)
 
 	// mockSkillsDir/test-skill is deliberately never created.
 
@@ -1013,7 +1210,7 @@ func TestSyncCommandRunEscapesPipeInSummaryNotes(t *testing.T) {
 
 	cmd, _, _ := newTestSyncSetup(t, ts)
 
-	writeSingleSkillManifest(t, cmd.pluginRoot, "pipe-note-1", "test-skill", 1)
+	writeSingleSkillManifest(t, cmd.syncRoot, "pipe-note-1", "test-skill", 1)
 
 	var buf bytes.Buffer
 
@@ -1080,6 +1277,8 @@ func newTestSyncSetup(t *testing.T, ts *httptest.Server) (cmd SyncCommand, mockS
 		config.Registry.BaseUrl = ts.URL
 
 		config.Registry.AuthBaseUrl = ts.URL
+
+		config.Local.Skills.Mode = cfg.SkillsModeClaude
 
 		return config, nil
 	}
@@ -1154,7 +1353,7 @@ func assertSyncResult(t *testing.T, mockSkillsDir, pluginRoot string) {
 
 	wrapperContent, err := os.ReadFile(filepath.Join(mockSkillsDir, reservedSyncSkillsName, "SKILL.md"))
 	require.NoError(t, err, "the sync-skills wrapper's SKILL.md should exist after sync")
-	assert.Equal(t, string(syncSkillsSkillContent), string(wrapperContent), "the sync-skills wrapper's SKILL.md should match the CLI's embedded content")
+	assert.Equal(t, string(syncSkillsSkillContentClaude), string(wrapperContent), "the sync-skills wrapper's SKILL.md should match the CLI's embedded content")
 
 	actualManifestBytes, err := os.ReadFile(filepath.Join(pluginRoot, manifestFileName))
 	require.NoError(t, err, "should be able to read the skill-lock.json file after sync")

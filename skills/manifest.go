@@ -51,10 +51,17 @@ func NewManifestReadWriter(pluginRoot string) ManifestReadWriter {
 	return ManifestReadWriter{path: filepath.Join(pluginRoot, manifestFileName)}
 }
 
+// Exists reports whether the manifest file is present on disk.
+func (mrw ManifestReadWriter) Exists() bool {
+	_, err := os.Stat(mrw.path)
+
+	return err == nil
+}
+
 // ReadManifest returns the manifest file's contents, or a zero ManifestV1
 // if the file does not exist or its content is malformed. A corrupt
 // manifest and a missing one are treated identically: once past the
-// consent gate (see ensurePluginRootConsent), neither leaves a
+// consent gate (see ensureSyncRootConsent), neither leaves a
 // trustworthy record of a prior sync, and Run resyncs every skill fresh
 // from the Registry in that situation regardless. A read failure (e.g.
 // the file exists but a permission error prevents reading it) is still a

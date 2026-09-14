@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/ascending-llc/jarvis-registry-cli/cfg"
 )
 
 const (
@@ -20,17 +22,23 @@ const (
 	// containing plugin root) as owned by this CLI.
 	managedByValue = "jarvis-registry-cli"
 
-	// syncSkillsVersion is bumped by hand whenever
-	// embedded/sync-skills-SKILL.md changes.
-	syncSkillsVersion = 3
+	// syncSkillsVersion is bumped by hand whenever any of the three
+	// embedded/sync-skills-*-SKILL.md files change.
+	syncSkillsVersion = 4
 )
 
 var (
 	//go:embed embedded/plugin.json
 	pluginManifestContent []byte
 
-	//go:embed embedded/sync-skills-SKILL.md
-	syncSkillsSkillContent []byte
+	//go:embed embedded/sync-skills-claude-SKILL.md
+	syncSkillsSkillContentClaude []byte
+
+	//go:embed embedded/sync-skills-codex-SKILL.md
+	syncSkillsSkillContentCodex []byte
+
+	//go:embed embedded/sync-skills-copilot-SKILL.md
+	syncSkillsSkillContentCopilot []byte
 )
 
 // atomicWriteFile writes content to path by first writing a temp file in
@@ -112,8 +120,9 @@ func reconcilePluginManifest(pluginRoot string, stderrLogger Logger) (created bo
 }
 
 // reconcileSyncSkillsWrapper rewrites <destDir>/sync-skills/SKILL.md from
-// syncSkillsSkillContent (creating <destDir>/sync-skills/ first if
-// needed — on a brand-new plugin root that folder does not exist yet)
+// the mode-specific embedded wrapper content (see wrapperContentForMode),
+// creating <destDir>/sync-skills/ first if needed — on a brand-new sync
+// root that folder does not exist yet —
 // whenever the file is missing, unreadable, not a regular file
 // (mirroring stageOne's stat check), or recordedVersion disagrees with
 // the current syncSkillsVersion. recordedVersion is not this function's
@@ -122,7 +131,7 @@ func reconcilePluginManifest(pluginRoot string, stderrLogger Logger) (created bo
 // notice is logged via stderrLogger only when an actual pre-existing
 // version mismatch is being overwritten. Returns syncSkillsVersion on
 // success, to be threaded into WriteManifest.
-func reconcileSyncSkillsWrapper(destDir string, recordedVersion int, stderrLogger Logger) (newVersion int, err error) {
+func reconcileSyncSkillsWrapper(destDir string, recordedVersion int, mode cfg.SkillsMode, stderrLogger Logger) (newVersion int, err error) {
 	dir := filepath.Join(destDir, reservedSyncSkillsName)
 	path := filepath.Join(dir, "SKILL.md")
 
@@ -148,9 +157,23 @@ func reconcileSyncSkillsWrapper(destDir string, recordedVersion int, stderrLogge
 		return 0, fmt.Errorf("failed to create sync-skills wrapper directory at %s: %s", dir, err.Error())
 	}
 
-	if err = atomicWriteFile(path, syncSkillsSkillContent, 0644); err != nil {
+	if err = atomicWriteFile(path, wrapperContentForMode(mode), 0644); err != nil {
 		return 0, err
 	}
 
 	return syncSkillsVersion, nil
+}
+
+// wrapperContentForMode returns the embedded sync-skills wrapper SKILL.md
+// content for mode.
+func wrapperContentForMode(mode cfg.SkillsMode) []byte {
+	switch mode {
+	case cfg.SkillsModeCodex:
+		return syncSkillsSkillContentCodex
+	case cfg.SkillsModeCopilot:
+		return syncSkillsSkillContentCopilot
+	case cfg.SkillsModeClaude:
+	}
+
+	return syncSkillsSkillContentClaude
 }
