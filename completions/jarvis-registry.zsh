@@ -21,11 +21,39 @@ _jarvis-registry_configure() {
         '(-h --help)'{-h,--help}'[Show context-sensitive help.]'
 }
 
-_jarvis-registry_sync-skills() {
+_jarvis-registry_skills_sync() {
     _arguments \
         '(-h --help)'{-h,--help}'[Show context-sensitive help.]' \
         '--mode[Skills sync mode.]:mode:(claude codex copilot)' \
         '1:project directory:_files -/'
+}
+
+_jarvis-registry_skills_show() {
+    _arguments \
+        '(-h --help)'{-h,--help}'[Show context-sensitive help.]'
+}
+
+_jarvis-registry_skills() {
+    local -a commands
+    commands=(
+        'sync:Sync skills against Jarvis Registry service.'
+        'show:Show local skills sync settings.'
+    )
+    _arguments -C \
+        '(-h --help)'{-h,--help}'[Show context-sensitive help.]' \
+        '1: :->command' \
+        '*:: :->args' \
+        && return 0
+
+    case $state in
+        command) _describe 'command' commands ;;
+        args)
+            case $words[1] in
+                sync) _jarvis-registry_skills_sync ;;
+                show) _jarvis-registry_skills_show ;;
+            esac
+            ;;
+    esac
 }
 
 _jarvis-registry() {
@@ -33,7 +61,7 @@ _jarvis-registry() {
     commands=(
         'auth:Manage Registry authentication.'
         'configure:Interactively configure the CLI, e.g. the Registry base URL.'
-        'sync-skills:Sync skills against Jarvis Registry service.'
+        'skills:Manage local skills sync.'
     )
 
     _arguments -C \
@@ -51,7 +79,7 @@ _jarvis-registry() {
             case $words[1] in
                 auth) _jarvis-registry_auth ;;
                 configure) _jarvis-registry_configure ;;
-                sync-skills) _jarvis-registry_sync-skills ;;
+                skills) _jarvis-registry_skills ;;
             esac
             ;;
     esac
