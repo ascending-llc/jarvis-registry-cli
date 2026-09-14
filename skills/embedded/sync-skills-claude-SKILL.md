@@ -17,7 +17,7 @@ substituting `$path` verbatim (not the literal text `$path`). Otherwise, run
 `jarvis-registry skills sync --mode claude` with no path argument at all.
 
 If it fails because the user isn't authenticated, tell them to run `jarvis-registry auth login`
-(this is the command that opens a browser device-flow login), then re-run sync. `sync-skills`
+(this is the command that opens a browser device-flow login), then re-run sync. `skills sync`
 itself never opens a browser or starts a login flow; it only ever reads an already-cached
 credential and fails loudly if none exists.
 
