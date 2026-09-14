@@ -30,9 +30,9 @@ func TestShowCommandRun(t *testing.T) {
 		wantOutput string
 		skipIds    []string
 	}{
-		{name: "mode set and skip_ids set", mode: cfg.SkillsModeClaude, skipIds: []string{"skill-1", "skill-2"}, wantOutput: "Skill sync mode: claude\nSkip IDs: skill-1, skill-2\n"},
-		{name: "mode unset prints placeholder", mode: "", skipIds: []string{"skill-1"}, wantOutput: "Skill sync mode: (not set)\nSkip IDs: skill-1\n"},
-		{name: "skip_ids empty prints placeholder", mode: cfg.SkillsModeCodex, skipIds: nil, wantOutput: "Skill sync mode: codex\nSkip IDs: (none)\n"},
+		{name: "mode set and skip_ids set", mode: cfg.SkillsModeClaude, skipIds: []string{"skill-1", "skill-2"}, wantOutput: "Skill sync mode: claude\nSkip IDs:\n  - skill-1\n  - skill-2\n"},
+		{name: "mode unset prints placeholder", mode: "", skipIds: []string{"skill-1"}, wantOutput: "Skill sync mode: (not set)\nSkip IDs:\n  - skill-1\n"},
+		{name: "skip_ids empty prints placeholder", mode: cfg.SkillsModeCodex, skipIds: nil, wantOutput: "Skill sync mode: codex\nSkip IDs: None\n"},
 	}
 
 	for _, c := range cases {

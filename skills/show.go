@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/ascending-llc/jarvis-registry-cli/cfg"
 )
@@ -55,6 +54,8 @@ func (c *ShowCommand) AfterApply() (err error) {
 
 // Run prints the resolved local.skills.mode and local.skills.skip_ids
 // values, substituting an explicit placeholder for the unset/empty case.
+// skip_ids, when non-empty, is printed as a Markdown-style unordered list
+// so a long list of Ids doesn't run together on one line.
 func (c *ShowCommand) Run() error {
 	mode := string(c.mode)
 	if mode == "" {
@@ -63,12 +64,17 @@ func (c *ShowCommand) Run() error {
 
 	c.logger.Printf("Skill sync mode: %s\n", mode)
 
-	skipIds := "(none)"
-	if len(c.skipIds) > 0 {
-		skipIds = strings.Join(c.skipIds, ", ")
+	if len(c.skipIds) == 0 {
+		c.logger.Println("Skip IDs: None")
+
+		return nil
 	}
 
-	c.logger.Printf("Skip IDs: %s\n", skipIds)
+	c.logger.Println("Skip IDs:")
+
+	for _, id := range c.skipIds {
+		c.logger.Printf("  - %s\n", id)
+	}
 
 	return nil
 }
