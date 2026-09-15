@@ -53,7 +53,10 @@ func (c *ShowCommand) AfterApply() (err error) {
 }
 
 // Run prints the resolved local.skills.mode and local.skills.skip_ids
-// values, substituting an explicit placeholder for the unset/empty case.
+// values, substituting an explicit placeholder for the unset mode. The
+// skip_ids line is omitted entirely when empty, since skip_ids is an
+// opt-in setting not advertised by `jarvis-registry configure`; printing
+// it as unset could otherwise surprise users who never configured it.
 // skip_ids, when non-empty, is printed as a Markdown-style unordered list
 // so a long list of Ids doesn't run together on one line.
 func (c *ShowCommand) Run() error {
@@ -65,8 +68,6 @@ func (c *ShowCommand) Run() error {
 	c.logger.Printf("Skill sync mode: %s\n", mode)
 
 	if len(c.skipIds) == 0 {
-		c.logger.Println("Skip IDs: None")
-
 		return nil
 	}
 
