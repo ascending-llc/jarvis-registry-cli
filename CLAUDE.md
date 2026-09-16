@@ -56,3 +56,8 @@ Use `fmt.Errorf("...: %s", err.Error())` for context-only wrapping — this is t
 ## Doc comments
 
 All new or changed exported identifiers require godoc-style comments.
+
+## Release and distribution (GoReleaser / Homebrew)
+
+`.goreleaser.yaml` intentionally keeps the legacy `brews:` config instead of migrating to GoReleaser's newer `homebrew_casks:`. GoReleaser recommends the migration for architectural purity (a Formula is nominally for building from source; a Cask is the "correct" vehicle for a pre-built binary), but Homebrew Casks apply the `com.apple.quarantine` attribute to installed binaries — mimicking a signed vendor download — which triggers Gatekeeper failures ("cannot be opened") for unsigned binaries. This project's macOS builds are not code-signed or notarized, so migrating today would break `jarvis-registry` on every user's first run. `brews:`-generated Formulae install unquarantined, so staying on `brews:` is a deliberate tradeoff, not an oversight — don't re-litigate it without one of: (a) the team adopting Apple Developer code signing + notarization for macOS builds, or (b) GoReleaser actually removing `brews:` in a future major version (per GoReleaser's own policy, deprecated options are only removed on major versions, so this isn't imminent).
+
