@@ -56,3 +56,8 @@ Use `fmt.Errorf("...: %s", err.Error())` for context-only wrapping — this is t
 ## Doc comments
 
 All new or changed exported identifiers require godoc-style comments.
+
+## Release and distribution (GoReleaser / Homebrew)
+
+`.goreleaser.yaml` keeps GoReleaser's legacy `brews:` config over the newer `homebrew_casks:`. Casks quarantine installed binaries (`com.apple.quarantine`), which Gatekeeper blocks for unsigned binaries; this project doesn't code-sign or notarize macOS builds, so migrating would break `jarvis-registry` on first run. `brews:` Formulae install unquarantined. Revisit only after adopting Apple Developer code signing + notarization, or if GoReleaser removes `brews:` outright.
+

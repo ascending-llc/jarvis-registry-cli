@@ -48,6 +48,16 @@ brews:
       bash_completion.install "completions/jarvis-registry.bash" => "jarvis-registry"
       zsh_completion.install "completions/jarvis-registry.zsh" => "_jarvis-registry"
       fish_completion.install "completions/jarvis-registry.fish"
+      bin.install_symlink "jarvis-registry" => "jr"
+    caveats: |
+      Run these once, in order, to get started:
+        1. jarvis-registry configure   - set the Registry base URL and skills sync mode
+        2. jarvis-registry auth login  - sign in via browser (cached in your OS keyring)
+        3. jarvis-registry skills sync - pull the skills you have access to
+
+      Run `jarvis-registry --help` for the full flag reference.
+
+      A `jr` symlink has also been installed as a shorthand for `jarvis-registry`.
     test: |
       system "#{bin}/jarvis-registry", "--version"
       system "#{bin}/jarvis-registry", "-v"
