@@ -50,6 +50,6 @@ _jarvis_registry_complete() {
     return 0
 }
 
-complete -F _jarvis_registry_complete jarvis-registry
+complete -F _jarvis_registry_complete jarvis-registry jr
 
 # vim: set ft=sh :
