@@ -46,7 +46,7 @@ brews:
     license: "Apache-2.0"
     extra_install: |
       bash_completion.install "completions/jarvis-registry.bash" => "jarvis-registry"
-      bash_completion.install "completions/jarvis-registry.bash" => "jr"
+      bash_completion.install_symlink "jarvis-registry" => "jr"
       zsh_completion.install "completions/jarvis-registry.zsh" => "_jarvis-registry"
       fish_completion.install "completions/jarvis-registry.fish"
       fish_completion.install "completions/jr.fish"
