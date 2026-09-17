@@ -1,4 +1,4 @@
-#compdef jarvis-registry
+#compdef jarvis-registry jr
 
 _jarvis-registry_auth() {
     local -a commands
