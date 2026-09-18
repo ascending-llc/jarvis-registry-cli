@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nyaosorg/go-windows-junction"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -136,6 +137,8 @@ func TestSyncCommandAfterApply(t *testing.T) {
 			assert.Equal(t, c.baseUrl, cmd.baseUrl, "baseUrl should be taken from config.Registry.BaseUrl")
 			assert.Equal(t, c.wantAuthBaseUrl, cmd.authBaseUrl, "authBaseUrl should be taken from config.Registry.AuthBaseUrl, distinct from baseUrl when cfg.Load resolved it that way")
 			assert.Equal(t, c.skipIds, cmd.skipIds, "skipIds should be taken from config.Local.Skills.SkipIds")
+			assert.False(t, cmd.override, "link.override should default false when unset in config")
+			assert.False(t, cmd.personalScope, "claude with an explicit path is not Codex/Copilot personal scope")
 			assert.Equal(t, filepath.Join(cmd.ProjectPath, ".claude", "skills", "jarvis-registry"), cmd.syncRoot, "syncRoot should be derived from ProjectPath")
 
 			require.NotNil(t, cmd.tp, "tp should be initialized")
@@ -231,6 +234,7 @@ func TestSyncCommandAfterApplyModeResolution(t *testing.T) {
 		assert.Equal(t, cfg.SkillsModeCodex, cmd.mode, "the flag should win over the config value")
 		assert.Equal(t, filepath.Join(project, ".agents", "skills"), cmd.syncRoot, "codex syncRoot should be <project>/.agents/skills")
 		assert.Equal(t, cmd.syncRoot, cmd.destDir, "codex syncRoot and destDir are the same flat directory")
+		assert.False(t, cmd.personalScope, "an explicit project path is not personal scope")
 	})
 
 	t.Run("copilot destination", func(t *testing.T) {
@@ -257,10 +261,25 @@ func TestSyncCommandAfterApplyModeResolution(t *testing.T) {
 		assert.Contains(t, err.Error(), `invalid --mode "vscode"`, "the error should name the offending value")
 	})
 
-	t.Run("codex without a project path fails, naming the mode", func(t *testing.T) {
-		_, err := afterApplyForMode(t, t.TempDir(), "", "codex", "")
-		require.Error(t, err, "codex mode requires a project directory")
-		assert.Contains(t, err.Error(), "a project directory is required in codex mode", "the error should name the mode")
+	t.Run("codex without a project path uses personal scope", func(t *testing.T) {
+		for _, mode := range []string{"codex", "copilot"} {
+			t.Run(mode, func(t *testing.T) {
+				home := t.TempDir()
+				cmd, err := afterApplyForMode(t, home, "", mode, "")
+				require.NoError(t, err, "omitting the path is now personal scope")
+				assert.True(t, cmd.personalScope)
+				assert.Equal(t, filepath.Join(home, ".jarvis-registry", "skills", mode), cmd.syncRoot)
+				assert.Equal(t, cmd.syncRoot, cmd.destDir)
+			})
+		}
+	})
+
+	t.Run("whitespace-only project path is treated as personal scope", func(t *testing.T) {
+		home := t.TempDir()
+		cmd, err := afterApplyForMode(t, home, "  \t  ", "codex", "")
+		require.NoError(t, err)
+		assert.True(t, cmd.personalScope)
+		assert.Equal(t, filepath.Join(home, ".jarvis-registry", "skills", "codex"), cmd.syncRoot)
 	})
 
 	t.Run("codex refuses the personal-scope home directory", func(t *testing.T) {
@@ -269,6 +288,7 @@ func TestSyncCommandAfterApplyModeResolution(t *testing.T) {
 		_, err := afterApplyForMode(t, home, home, "codex", "")
 		require.Error(t, err, "codex mode must refuse syncing into the home directory")
 		assert.Contains(t, err.Error(), "does not support syncing into the user's home directory", "the error should explain the refusal")
+		assert.Contains(t, err.Error(), "omit the path for personal scope", "the error should tell the caller how to select personal scope")
 	})
 
 	t.Run("codex refuses a symlink that resolves to the home directory", func(t *testing.T) {
@@ -279,6 +299,7 @@ func TestSyncCommandAfterApplyModeResolution(t *testing.T) {
 		_, err := afterApplyForMode(t, home, link, "codex", "")
 		require.Error(t, err, "codex mode must refuse a symlinked path that resolves to home")
 		assert.Contains(t, err.Error(), "does not support syncing into the user's home directory", "the error should explain the refusal")
+		assert.Contains(t, err.Error(), "omit the path for personal scope", "the error should tell the caller how to select personal scope")
 	})
 
 	t.Run("claude still defaults to the home directory when no path is given", func(t *testing.T) {
@@ -291,7 +312,30 @@ func TestSyncCommandAfterApplyModeResolution(t *testing.T) {
 		require.NoError(t, err, "claude mode keeps its personal-scope default")
 		assert.Equal(t, filepath.Join(home, ".claude", "skills", "jarvis-registry"), cmd.syncRoot)
 		assert.Equal(t, filepath.Join(cmd.syncRoot, "skills"), cmd.destDir, "claude destDir nests under syncRoot")
+		assert.False(t, cmd.personalScope, "claude's home default is not Codex/Copilot personalScope")
 	})
+}
+
+func TestSyncCommandAfterApplyLinkOverride(t *testing.T) {
+	cmd := SyncCommand{}
+	require.NoError(t, cmd.BeforeReset())
+
+	cmd.userHomeDir = t.TempDir()
+	cmd.Mode = "codex"
+	cmd.configLoadFunc = func(string) (cfg.Config, error) {
+		var config cfg.Config
+
+		config.Registry.BaseUrl = "https://registry.example.com"
+		config.Registry.AuthBaseUrl = "https://registry.example.com"
+		config.Local.Skills.Mode = cfg.SkillsModeCodex
+		config.Local.Skills.Link.Override = true
+
+		return config, nil
+	}
+
+	require.NoError(t, cmd.AfterApply())
+	assert.True(t, cmd.override)
+	assert.True(t, cmd.personalScope)
 }
 
 // buildModeCmd wires a ready-to-Run SyncCommand for mode against ts,
@@ -386,6 +430,9 @@ func TestSyncCommandRunCodexAndCopilot(t *testing.T) {
 			assert.Equal(t, string(c.wantWrapper), string(wrapper), "the wrapper content should be this mode's embedded variant")
 
 			assert.Contains(t, buf.String(), "First time skill sync into "+destDir, "the first-time banner should name the sync root")
+			assert.Contains(t, buf.String(), "Sync scope: project ("+destDir+")", "project-scope runs should name the destination")
+			assert.Equal(t, []string{"Skill", "Status", "Previous Version", "Current Version", "Notes"}, parseMarkdownSummaryHeader(t, buf.String()), "project-scope summary must keep the five-column table")
+			assert.NoDirExists(t, filepath.Join(cmd.userHomeDir, "."+string(c.mode), "skills"), "project-scope sync must not create personal-scope links")
 
 			// A foreign, untracked entry placed before a second sync is
 			// deleted, but the manifest is preserved.
@@ -399,6 +446,223 @@ func TestSyncCommandRunCodexAndCopilot(t *testing.T) {
 			assert.FileExists(t, manifestPath, "the manifest must not be deleted by a subsequent sync")
 		})
 	}
+}
+
+func TestSyncCommandRunPersonalScope(t *testing.T) {
+	for _, mode := range []cfg.SkillsMode{cfg.SkillsModeCodex, cfg.SkillsModeCopilot} {
+		t.Run(string(mode), func(t *testing.T) {
+			ts, _ := newSingleSkillTestServer(t, "personal-1", "hello-skill", 1, Content{Description: "a skill", Body: "Hello.\n"}, false)
+			cmd := buildModeCmd(t, ts, "", mode)
+
+			var output bytes.Buffer
+
+			cmd.logger = log.New(&output, "", 0)
+			cmd.stderrLogger = log.New(&output, "", 0)
+			require.NoError(t, cmd.Run())
+
+			root := filepath.Join(cmd.userHomeDir, ".jarvis-registry", "skills", string(mode))
+			entry := filepath.Join(cmd.userHomeDir, "."+string(mode), "skills")
+			assert.Equal(t, root, cmd.destDir)
+			assert.True(t, cmd.personalScope)
+
+			for _, name := range []string{"hello-skill", reservedSyncSkillsName} {
+				assert.FileExists(t, filepath.Join(root, name, "SKILL.md"))
+				assert.FileExists(t, filepath.Join(entry, name, "SKILL.md"))
+			}
+
+			assert.Contains(t, output.String(), "Sync scope: personal ("+root+")")
+			assert.Equal(t, []string{"Skill", "Status", "Previous Version", "Current Version", "Notes", "Link"}, parseMarkdownSummaryHeader(t, output.String()))
+
+			rows := parseMarkdownSummaryRows(t, output.String())
+			created := findSummaryRow(t, rows, "hello-skill", statusCreated)
+			require.Len(t, created, 6)
+			assert.Equal(t, linkStatusLinked, created[5])
+			wrapper := findSummaryRow(t, rows, reservedSyncSkillsName, "-")
+			assert.Equal(t, linkStatusLinked, wrapper[5])
+			assert.Contains(t, wrapper[4], "built-in sync-skills wrapper")
+
+			output.Reset()
+			require.NoError(t, cmd.Run())
+			rows = parseMarkdownSummaryRows(t, output.String())
+			unchanged := findSummaryRow(t, rows, "hello-skill", statusUnchanged)
+			assert.Equal(t, linkStatusUnchanged, unchanged[5])
+			wrapper = findSummaryRow(t, rows, reservedSyncSkillsName, "-")
+			assert.Equal(t, linkStatusUnchanged, wrapper[5])
+		})
+	}
+}
+
+func TestSyncCommandPersonalScopeInteractiveValidation(t *testing.T) {
+	for _, mode := range []string{"claude", "codex", "copilot"} {
+		for _, personal := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/personal=%t", mode, personal), func(t *testing.T) {
+				home := t.TempDir()
+
+				project := ""
+				if !personal {
+					project = t.TempDir()
+				}
+
+				cmd, err := afterApplyForMode(t, home, project, mode, "")
+				require.NoError(t, err)
+
+				cmd.Interactive = true
+				cmd.isTerminal = func() bool { return false }
+
+				err = cmd.AfterApply()
+				if personal && mode != "claude" {
+					require.Error(t, err)
+					assert.Contains(t, err.Error(), "stdin is not a terminal")
+					assert.NoDirExists(t, filepath.Join(home, ".jarvis-registry"))
+				} else {
+					require.NoError(t, err)
+				}
+			})
+		}
+	}
+}
+
+func TestSyncCommandRunPersonalScopeRenameAndDelete(t *testing.T) {
+	for _, mode := range []cfg.SkillsMode{cfg.SkillsModeCodex, cfg.SkillsModeCopilot} {
+		t.Run(string(mode), func(t *testing.T) {
+			ts, _ := newSingleSkillTestServer(t, "rename-1", "old-name", 1, Content{Description: "a skill", Body: "Hello.\n"}, false)
+			cmd := buildModeCmd(t, ts, "", mode)
+
+			var output bytes.Buffer
+
+			cmd.logger = log.New(&output, "", 0)
+			cmd.stderrLogger = log.New(&output, "", 0)
+			require.NoError(t, cmd.Run())
+
+			entry := filepath.Join(cmd.userHomeDir, "."+string(mode), "skills")
+			foreign := filepath.Join(entry, "manual")
+			require.NoError(t, os.Mkdir(foreign, 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(foreign, "keep"), []byte("keep"), 0600))
+
+			next, _ := newSingleSkillTestServer(t, "rename-1", "new-name", 2, Content{Description: "a skill", Body: "Updated.\n"}, false)
+			cmd.baseUrl = next.URL
+
+			output.Reset()
+			require.NoError(t, cmd.Run())
+
+			_, err := os.Lstat(filepath.Join(entry, "old-name"))
+			assert.ErrorIs(t, err, fs.ErrNotExist)
+			assert.FileExists(t, filepath.Join(entry, "new-name", "SKILL.md"))
+			assert.Contains(t, output.String(), "old-name")
+			row := findSummaryRow(t, parseMarkdownSummaryRows(t, output.String()), "old-name", "-")
+			assert.Equal(t, linkStatusRemoved, row[5])
+			assert.FileExists(t, filepath.Join(foreign, "keep"))
+
+			cmd.skipIds = []string{"rename-1"}
+
+			output.Reset()
+			require.NoError(t, cmd.Run())
+
+			_, err = os.Lstat(filepath.Join(entry, "new-name"))
+			assert.ErrorIs(t, err, fs.ErrNotExist)
+			assert.Contains(t, output.String(), "Removed")
+			assert.FileExists(t, filepath.Join(foreign, "keep"))
+		})
+	}
+}
+
+func TestSyncCommandRunPersonalScopeCollisionAndRepair(t *testing.T) {
+	ts, _ := newSingleSkillTestServer(t, "personal-1", "hello-skill", 1, Content{Description: "a skill", Body: "Hello.\n"}, false)
+	cmd := buildModeCmd(t, ts, "", cfg.SkillsModeCodex)
+
+	var output bytes.Buffer
+
+	cmd.logger = log.New(&output, "", 0)
+	cmd.stderrLogger = log.New(&output, "", 0)
+	entry := filepath.Join(cmd.userHomeDir, ".codex", "skills")
+	require.NoError(t, os.MkdirAll(entry, 0700))
+	conflict := filepath.Join(entry, "hello-skill")
+	require.NoError(t, os.WriteFile(conflict, []byte("mine"), 0600))
+	require.NoError(t, cmd.Run(), "a skipped link collision must not fail the command")
+
+	body, err := os.ReadFile(conflict)
+	require.NoError(t, err)
+	assert.Equal(t, "mine", string(body))
+	row := findSummaryRow(t, parseMarkdownSummaryRows(t, output.String()), "hello-skill", statusCreated)
+	require.Len(t, row, 6)
+	assert.Equal(t, linkStatusSkipped, row[5])
+	assert.Contains(t, output.String(), conflict)
+
+	cmd.override = true
+
+	output.Reset()
+	require.NoError(t, cmd.Run())
+	assert.FileExists(t, filepath.Join(conflict, "SKILL.md"))
+	row = findSummaryRow(t, parseMarkdownSummaryRows(t, output.String()), "hello-skill", statusUnchanged)
+	assert.Equal(t, linkStatusLinked, row[5])
+}
+
+func TestSyncCommandRunPersonalScopeDirectoryFailure(t *testing.T) {
+	ts, _ := newSingleSkillTestServer(t, "personal-1", "hello-skill", 1, Content{Description: "a skill", Body: "Hello.\n"}, false)
+	cmd := buildModeCmd(t, ts, "", cfg.SkillsModeCodex)
+
+	var output bytes.Buffer
+
+	cmd.logger = log.New(&output, "", 0)
+	entry := filepath.Join(cmd.userHomeDir, ".codex")
+	require.NoError(t, os.Mkdir(entry, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(entry, "skills"), []byte("mine"), 0600))
+
+	err := cmd.Run()
+	require.Error(t, err, "directory-level link errors must reach Run's caller")
+	assert.Contains(t, err.Error(), "personal skills directory")
+
+	manifest, err := cmd.mrw.ReadManifest()
+	require.NoError(t, err)
+	require.Len(t, manifest.Skills, 1, "successful content remains recorded for a link retry")
+	assert.FileExists(t, filepath.Join(cmd.destDir, "hello-skill", "SKILL.md"))
+}
+
+func TestSyncCommandRunPersonalScopeContentFailure(t *testing.T) {
+	ts, _ := newSingleSkillTestServer(t, "broken-1", "broken", 1, Content{}, true)
+	cmd := buildModeCmd(t, ts, "", cfg.SkillsModeCodex)
+
+	var output bytes.Buffer
+
+	cmd.logger = log.New(&output, "", 0)
+	require.Error(t, cmd.Run())
+
+	entry := filepath.Join(cmd.userHomeDir, ".codex", "skills")
+	assert.FileExists(t, filepath.Join(entry, "sync-skills", "SKILL.md"))
+	_, err := os.Lstat(filepath.Join(entry, "broken"))
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+
+	row := findSummaryRow(t, parseMarkdownSummaryRows(t, output.String()), "broken", statusFailed)
+	require.Len(t, row, 6)
+	assert.Equal(t, "-", row[5])
+}
+
+func TestSyncCommandRunPersonalScopePrunesUnrecordedLink(t *testing.T) {
+	ts, _ := newSingleSkillTestServer(t, "personal-1", "hello-skill", 1, Content{Description: "a skill", Body: "Hello.\n"}, false)
+	cmd := buildModeCmd(t, ts, "", cfg.SkillsModeCodex)
+
+	var output bytes.Buffer
+
+	cmd.logger = log.New(&output, "", 0)
+	require.NoError(t, cmd.Run())
+
+	old := filepath.Join(cmd.destDir, "unrecorded")
+	link := filepath.Join(cmd.userHomeDir, ".codex", "skills", "unrecorded")
+
+	require.NoError(t, os.Mkdir(old, 0700))
+	require.NoError(t, junction.Create(old, link))
+	require.NoError(t, os.Remove(old))
+
+	output.Reset()
+	require.NoError(t, cmd.Run())
+
+	row := findSummaryRow(t, parseMarkdownSummaryRows(t, output.String()), "unrecorded", "-")
+	require.Len(t, row, 6)
+	assert.Equal(t, linkStatusRemoved, row[5])
+	assert.Contains(t, row[4], "dangling link cleanup")
+
+	_, err := os.Lstat(link)
+	assert.ErrorIs(t, err, fs.ErrNotExist)
 }
 
 func TestSyncCommandRunRejectsManifestFilenameSkill(t *testing.T) {
@@ -612,6 +876,15 @@ func TestSyncCommandRun(t *testing.T) {
 func parseMarkdownSummaryRows(t *testing.T, output string) [][]string {
 	t.Helper()
 
+	rows := parseMarkdownTable(t, output)
+
+	// rows[0] is always the header row; callers only care about data rows.
+	return rows[1:]
+}
+
+func parseMarkdownTable(t *testing.T, output string) [][]string {
+	t.Helper()
+
 	var rows [][]string
 
 	for _, line := range strings.Split(output, "\n") {
@@ -636,9 +909,13 @@ func parseMarkdownSummaryRows(t *testing.T, output string) [][]string {
 
 	require.NotEmpty(t, rows, "the summary table should have rendered at least a header row")
 
-	// rows[0] is always the header row (Skill, Status, Previous Version,
-	// Current Version, Notes); callers only care about data rows.
-	return rows[1:]
+	return rows
+}
+
+func parseMarkdownSummaryHeader(t *testing.T, output string) []string {
+	t.Helper()
+
+	return parseMarkdownTable(t, output)[0]
 }
 
 // splitMarkdownRow splits a Markdown table row line into its cell

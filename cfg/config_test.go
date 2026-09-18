@@ -59,6 +59,22 @@ func TestLoadSkillsMode(t *testing.T) {
 	})
 }
 
+func TestLoadLinkOverride(t *testing.T) {
+	for _, tc := range []struct {
+		fixture string
+		want    bool
+	}{
+		{fixture: "valid-base-url", want: false},
+		{fixture: "valid-link-override", want: true},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			config, err := Load(filepath.Join("testdata", tc.fixture))
+			require.NoError(t, err, "Load should succeed for a well-formed config")
+			assert.Equal(t, tc.want, config.Local.Skills.Link.Override, "link.override should default false and parse true when set")
+		})
+	}
+}
+
 func TestLoadMissingConfig(t *testing.T) {
 	registryDir := t.TempDir()
 

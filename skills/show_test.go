@@ -29,10 +29,13 @@ func TestShowCommandRun(t *testing.T) {
 		mode       cfg.SkillsMode
 		wantOutput string
 		skipIds    []string
+		override   bool
 	}{
 		{name: "mode set and skip_ids set", mode: cfg.SkillsModeClaude, skipIds: []string{"skill-1", "skill-2"}, wantOutput: "Skill sync mode: claude\nSkip IDs:\n  - skill-1\n  - skill-2\n"},
 		{name: "mode unset prints placeholder", mode: "", skipIds: []string{"skill-1"}, wantOutput: "Skill sync mode: (not set)\nSkip IDs:\n  - skill-1\n"},
 		{name: "skip_ids empty omits skip IDs line", mode: cfg.SkillsModeCodex, skipIds: nil, wantOutput: "Skill sync mode: codex\n"},
+		{name: "override shown even without skip ids", mode: cfg.SkillsModeCodex, override: true, wantOutput: "Skill sync mode: codex\nlocal.skills.link.override: true\n"},
+		{name: "override shown before skip ids", mode: cfg.SkillsModeCopilot, skipIds: []string{"skill-1"}, override: true, wantOutput: "Skill sync mode: copilot\nlocal.skills.link.override: true\nSkip IDs:\n  - skill-1\n"},
 	}
 
 	for _, c := range cases {
@@ -49,6 +52,7 @@ func TestShowCommandRun(t *testing.T) {
 
 				config.Local.Skills.Mode = c.mode
 				config.Local.Skills.SkipIds = c.skipIds
+				config.Local.Skills.Link.Override = c.override
 
 				return config, nil
 			}

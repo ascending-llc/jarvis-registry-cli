@@ -24,7 +24,7 @@ _jarvis_registry_complete() {
                 sync)
                     case "$cur" in
                         -*)
-                            COMPREPLY=( $(compgen -W "-h --help --mode" -- "$cur") )
+                            COMPREPLY=( $(compgen -W "-h --help --mode -i --interactive" -- "$cur") )
                             ;;
                         *)
                             if [ "${COMP_WORDS[COMP_CWORD-1]}" = "--mode" ]; then

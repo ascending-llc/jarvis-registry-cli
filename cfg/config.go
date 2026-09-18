@@ -33,7 +33,7 @@ type (
 		// behavior, as opposed to anything about the Registry server itself.
 		Local struct {
 			// Skills holds settings specific to the skills sync subcommand.
-			Skills struct { //nolint:govet // fieldalignment: keep SkipIds and Mode in the order they were introduced, each with its own doc comment, rather than let the fixer collapse them into an undocumented, alignment-packed block — the two fields are both 8-byte-aligned (SkillsMode is a defined string type), so no padding is ever saved by reordering them.
+			Skills struct { //nolint:govet // fieldalignment: keep SkipIds, Mode, and Link in the order they were introduced, each with its own doc comment, rather than let the fixer collapse them into an undocumented, alignment-packed block.
 				// SkipIds lists skill Ids that skills sync must never create,
 				// update, or keep synced locally, even when the caller has
 				// Registry access.
@@ -45,6 +45,17 @@ type (
 				// of the three real modes and fail with an actionable message
 				// naming exactly what's missing.
 				Mode SkillsMode `mapstructure:"mode"`
+
+				// Link controls collisions when personal-scope Codex/Copilot
+				// sync creates same-named entries in the tool's own skills
+				// directory. Not prompted by `jarvis-registry configure`.
+				Link struct {
+					// Override, when true, lets personal-scope Codex/Copilot
+					// symlink reconciliation replace an existing
+					// file/folder/symlink at a still-desired skill name.
+					// Default false: a collision is left untouched and logged.
+					Override bool `mapstructure:"override"`
+				} `mapstructure:"link"`
 			} `mapstructure:"skills"`
 		} `mapstructure:"local"`
 	}
@@ -59,19 +70,21 @@ const (
 	// <ProjectPath>/.claude/skills/jarvis-registry/skills/.
 	SkillsModeClaude SkillsMode = "claude"
 
-	// SkillsModeCodex syncs into Codex's flat project-scope directory at
-	// <ProjectPath>/.agents/skills/.
+	// SkillsModeCodex syncs into <ProjectPath>/.agents/skills/, or a
+	// CLI-owned personal root at ~/.jarvis-registry/skills/codex/ with
+	// links under ~/.codex/skills/ when no path is given.
 	SkillsModeCodex SkillsMode = "codex"
 
-	// SkillsModeCopilot syncs into GitHub Copilot's flat project-scope
-	// directory at <ProjectPath>/.github/skills/.
+	// SkillsModeCopilot syncs into <ProjectPath>/.github/skills/, or a
+	// CLI-owned personal root at ~/.jarvis-registry/skills/copilot/ with
+	// links under ~/.copilot/skills/ when no path is given.
 	SkillsModeCopilot SkillsMode = "copilot"
 
 	// RegistryDirName is the name of the per-user directory, under the
 	// user's home directory, that holds the CLI's config file and its
-	// advisory sync locks (see skills.acquireLock). The sync manifest
-	// itself lives inside the sync root that skills.SyncCommand derives
-	// from its mode and ProjectPath, not here.
+	// advisory sync locks (see skills.acquireLock), plus personal
+	// Codex/Copilot skill roots. Each manifest lives inside the resolved
+	// sync root.
 	RegistryDirName = ".jarvis-registry"
 )
 

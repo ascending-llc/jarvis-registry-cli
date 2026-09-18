@@ -55,16 +55,22 @@ reference.
 `skills sync` targets one of three AI coding agents, selected via `local.skills.mode` in config or
 the `--mode` flag (the flag wins when both are set):
 
-| Mode     | Destination folder                                  | Scope                        | Skill invocation           |
-| -------- | ---------------------------------------------------- | ----------------------------- | --------------------------- |
-| `claude` | `<path>/.claude/skills/jarvis-registry/`             | personal (default) or project | `jarvis-registry:<skill-name>` |
-| `codex`  | `<path>/.agents/skills/`                              | project only                  | `<skill-name>`               |
-| `copilot`| `<path>/.github/skills/`                              | project only                  | `<skill-name>`               |
+| Mode | Personal scope (no path) | Project scope (explicit path) | Skill invocation |
+| --- | --- | --- | --- |
+| `claude` | `~/.claude/skills/jarvis-registry/` | `<path>/.claude/skills/jarvis-registry/` | `jarvis-registry:<skill-name>` |
+| `codex` | `~/.jarvis-registry/skills/codex/`, linked into `~/.codex/skills/` | `<path>/.agents/skills/` | `<skill-name>` |
+| `copilot` | `~/.jarvis-registry/skills/copilot/`, linked into `~/.copilot/skills/` | `<path>/.github/skills/` | `<skill-name>` |
 
-`claude` mode is the only one with a personal scope: omit the path argument and skills sync into your
-home directory, available to Claude Code across every project. `codex` and `copilot` always require a
-project directory (relative paths, including `.`, resolve against your current working directory) and
-refuse to target your home directory.
+All three modes use personal scope when the path is omitted, making skills available across projects
+without writing under any project directory. Codex/Copilot keep content in a CLI-owned directory and
+create one link per skill (including the built-in `sync-skills` wrapper) in the tool's personal skills
+directory (`~/.codex/skills/` or `~/.copilot/skills/`). On Windows these are directory junctions;
+elsewhere they are symbolic links.
+
+An explicit path selects project scope. Relative paths, including `.`, resolve against the current
+working directory. Codex/Copilot still refuse an explicit home-directory path; omit the path instead
+for personal scope. Project-scope Codex/Copilot sync retains its existing cleanup behavior: once the
+CLI manages that directory, entries not tracked by its sync are removed.
 
 ## Configuration
 
@@ -76,13 +82,15 @@ refuse to target your home directory.
 | `registry.auth_base_url`  | hand-edit                      | no       | Overrides the OAuth origin if it differs from `base_url`. Only needed for local Registry development.           |
 | `local.skills.mode`       | `configure`                    | see above| Default sync mode (`claude`, `codex`, or `copilot`), used when `--mode` isn't passed.                            |
 | `local.skills.skip_ids`   | hand-edit                      | no       | Registry skill `Id`s (not names) that `skills sync` should never create, update, or keep synced locally.        |
+| `local.skills.link.override` | hand-edit                   | no       | Default `false`. For personal-scope Codex/Copilot, replace existing files, folders, or links that collide with desired skill names. Replacing a real directory deletes its contents. |
 
 `local.skills.skip_ids` is useful if you already maintain a personal copy of a skill you've since
 published to the Registry under a different name — add its Registry `Id` here to keep only your
 personal copy in sync and skip the duplicate.
 
 Run `jarvis-registry skills show` to print the resolved `local.skills.mode` and
-`local.skills.skip_ids` values without opening the config file directly.
+`local.skills.skip_ids` values without opening the config file directly. It also shows
+`local.skills.link.override` when enabled. `configure` does not prompt for this setting.
 
 ## Authentication
 
@@ -99,7 +107,7 @@ Run `jarvis-registry skills show` to print the resolved `local.skills.mode` and
 ## Syncing skills
 
 ```
-jarvis-registry skills sync [<project-path>] [--mode claude|codex|copilot]
+jarvis-registry skills sync [<project-path>] [--mode claude|codex|copilot] [-i|--interactive]
 ```
 
 Examples:
@@ -111,17 +119,49 @@ jarvis-registry skills sync --mode claude
 # Claude Code, project scope
 jarvis-registry skills sync --mode claude .
 
-# Codex — project directory is required
+# Codex, personal scope (content in ~/.jarvis-registry/skills/codex/)
+jarvis-registry skills sync --mode codex
+
+# Codex, project scope
 jarvis-registry skills sync --mode codex .
 
-# GitHub Copilot — project directory is required
+# GitHub Copilot, personal scope (content in ~/.jarvis-registry/skills/copilot/)
+jarvis-registry skills sync --mode copilot
+
+# GitHub Copilot, project scope
 jarvis-registry skills sync --mode copilot .
+
+# Decide whether to replace each conflicting personal skill from a terminal
+jarvis-registry skills sync --mode copilot -i
 ```
 
 Each run reconciles your local skills folder against what's currently available to you on the
 Registry — creating new skills, updating changed ones, and removing ones you've lost access to — and
 prints a summary table of what changed. It's safe to re-run at any time, e.g. on a schedule, to pick up
 newly published or updated skills.
+
+Personal-scope Codex/Copilot sync leaves existing entries at conflicting skill names untouched by
+default. Its summary includes a `Link` column: `Linked`, `Unchanged`, `Relinked`, `Skipped`, `Removed`,
+or `Failed`; `-` means no link operation was performed. Content may sync successfully while its link
+is skipped or fails. Link failures cause a nonzero exit status; skipped collisions do not.
+
+For a skipped collision, move or remove the conflicting entry yourself, re-run from a terminal with
+`-i`/`--interactive`, or explicitly enable automatic replacement:
+
+```yaml
+local:
+  skills:
+    link:
+      override: true
+```
+
+Replacement deletes the conflicting file or folder and its contents. Replacing a link removes only
+the link, preserving its target. `-i` always asks, even when override is enabled; it is rejected when
+stdin is not a terminal. Both settings have no effect in Claude or project scope.
+
+When a synced skill is renamed or removed, the CLI cleans up links that point directly into its own
+sync root whose targets no longer exist. It leaves unrelated entries and links to other locations
+alone.
 
 ## Development
 
