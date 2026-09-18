@@ -93,6 +93,26 @@ func TestSyncCommandEnsureSyncRootConsent(t *testing.T) {
 		assert.Contains(t, err.Error(), "gh skill install", "the warning should name the other tools that manage the shared root")
 	})
 
+	t.Run("a foreign personal-scope codex root omits the shared-root warning", func(t *testing.T) {
+		syncRoot := t.TempDir()
+
+		require.NoError(t, os.WriteFile(filepath.Join(syncRoot, "some-other-file"), []byte("not ours"), 0644), "should be able to write a foreign file into the sync root")
+
+		c := &SyncCommand{
+			syncRoot:      syncRoot,
+			mode:          cfg.SkillsModeCodex,
+			personalScope: true,
+			mrw:           NewManifestReadWriter(syncRoot),
+			isTerminal:    func() bool { return false },
+			stdin:         strings.NewReader(""),
+		}
+
+		err := c.ensureSyncRootConsent()
+		require.Error(t, err, "a foreign personal-scope root should still be refused when stdin is not a terminal")
+		assert.Contains(t, err.Error(), "Refusing to modify it non-interactively", "the consent gate still applies")
+		assert.NotContains(t, err.Error(), sharedRootWarning, "a CLI-owned personal-scope root should not carry the shared-root warning")
+	})
+
 	t.Run("a foreign plugin root proceeds when an interactive user confirms", func(t *testing.T) {
 		for _, response := range []string{"y", "Y", "yes", "YES"} {
 			t.Run(response, func(t *testing.T) {

@@ -20,7 +20,8 @@ complete -c jarvis-registry -n '__fish_seen_subcommand_from skills; and not __fi
 complete -c jarvis-registry -n '__fish_seen_subcommand_from skills; and not __fish_seen_subcommand_from sync show' -a show -d 'Show local skills sync settings.'
 complete -c jarvis-registry -n '__fish_seen_subcommand_from skills' -s h -l help -d 'Show context-sensitive help.'
 
-# skills sync subcommand: project directory, mode, and help.
+# skills sync subcommand: project directory, mode, interactive linking, and help.
+complete -c jarvis-registry -n '__fish_seen_subcommand_from skills; and __fish_seen_subcommand_from sync' -s i -l interactive -d 'Prompt before replacing personal-scope skill link collisions.'
 complete -c jarvis-registry -n '__fish_seen_subcommand_from skills; and __fish_seen_subcommand_from sync' -l mode -d 'Skills sync mode.' -x -a 'claude codex copilot'
 complete -c jarvis-registry -n '__fish_seen_subcommand_from skills; and __fish_seen_subcommand_from sync' -a '(__fish_complete_directories)' -d 'Project directory'
 

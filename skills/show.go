@@ -19,6 +19,7 @@ type ShowCommand struct {
 	registryDir    string
 	mode           cfg.SkillsMode
 	skipIds        []string
+	override       bool
 }
 
 // BeforeReset sets defaults for ShowCommand that don't depend on parsed
@@ -36,8 +37,8 @@ func (c *ShowCommand) BeforeReset() (err error) {
 }
 
 // AfterApply derives ShowCommand's remaining dependencies from the loaded
-// config: the registry directory, and the resolved local.skills.mode and
-// local.skills.skip_ids values.
+// config: the registry directory, and the resolved local.skills.mode,
+// local.skills.skip_ids, and local.skills.link.override values.
 func (c *ShowCommand) AfterApply() (err error) {
 	c.registryDir = filepath.Join(c.userHomeDir, cfg.RegistryDirName)
 
@@ -48,17 +49,19 @@ func (c *ShowCommand) AfterApply() (err error) {
 
 	c.mode = config.Local.Skills.Mode
 	c.skipIds = config.Local.Skills.SkipIds
+	c.override = config.Local.Skills.Link.Override
 
 	return nil
 }
 
 // Run prints the resolved local.skills.mode and local.skills.skip_ids
-// values, substituting an explicit placeholder for the unset mode. The
-// skip_ids line is omitted entirely when empty, since skip_ids is an
-// opt-in setting not advertised by `jarvis-registry configure`; printing
-// it as unset could otherwise surprise users who never configured it.
-// skip_ids, when non-empty, is printed as a Markdown-style unordered list
-// so a long list of Ids doesn't run together on one line.
+// values, substituting an explicit placeholder for the unset mode, and
+// local.skills.link.override only when it is true. The skip_ids line is
+// omitted entirely when empty, since skip_ids is an opt-in setting not
+// advertised by `jarvis-registry configure`; printing it as unset could
+// otherwise surprise users who never configured it. skip_ids, when
+// non-empty, is printed as a Markdown-style unordered list so a long list
+// of Ids doesn't run together on one line.
 func (c *ShowCommand) Run() error {
 	mode := string(c.mode)
 	if mode == "" {
@@ -66,6 +69,10 @@ func (c *ShowCommand) Run() error {
 	}
 
 	c.logger.Printf("Skill sync mode: %s\n", mode)
+
+	if c.override {
+		c.logger.Println("local.skills.link.override: true")
+	}
 
 	if len(c.skipIds) == 0 {
 		return nil

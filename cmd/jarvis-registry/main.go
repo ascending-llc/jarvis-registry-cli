@@ -11,7 +11,7 @@ import (
 var version = "dev"
 
 func main() {
-	var cli struct {
+	var cli struct { //nolint:govet // fieldalignment: preserve the established command order in CLI help.
 		Skills struct {
 			Sync skills.SyncCommand `cmd:"" name:"sync" help:"Sync skills against Jarvis Registry service."`
 			Show skills.ShowCommand `cmd:"" name:"show" help:"Show local skills sync settings."`

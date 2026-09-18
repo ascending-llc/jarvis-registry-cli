@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -147,10 +148,35 @@ func (mrw ManifestReadWriter) WriteManifest(skills []Metadata, syncSkillsVersion
 		return fmt.Errorf("failed to toggle temp manifest file %s read-only: %s", tempPath, err.Error())
 	}
 
-	if err = os.Rename(tempPath, mrw.path); err != nil {
+	if err = replaceManifest(tempPath, mrw.path); err != nil {
 		_ = os.Remove(tempPath)
 
 		return fmt.Errorf("failed to move temp manifest file into place at %s: %s", mrw.path, err.Error())
+	}
+
+	return nil
+}
+
+// replaceManifest keeps the normal rename path, but permits replacing a
+// read-only manifest on Windows, where MoveFileEx otherwise rejects it.
+// The new file is already read-only; a failed retry restores the old mode.
+func replaceManifest(tempPath, path string) error {
+	err := os.Rename(tempPath, path)
+	if runtime.GOOS != "windows" || !errors.Is(err, fs.ErrPermission) {
+		return err
+	}
+
+	info, statErr := os.Lstat(path)
+	if statErr != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0200 != 0 {
+		return err
+	}
+
+	if chmodErr := os.Chmod(path, 0600); chmodErr != nil {
+		return errors.Join(err, chmodErr)
+	}
+
+	if err = os.Rename(tempPath, path); err != nil {
+		return errors.Join(err, os.Chmod(path, info.Mode().Perm()))
 	}
 
 	return nil
