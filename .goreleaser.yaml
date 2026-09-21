@@ -63,3 +63,28 @@ brews:
     test: |
       system "#{bin}/jarvis-registry", "--version"
       system "#{bin}/jarvis-registry", "-v"
+
+winget:
+  - name: jarvis-registry
+    publisher: ASCENDING
+    publisher_url: "https://ascendingdc.com"
+    publisher_support_url: "https://github.com/ascending-llc/jarvis-registry-cli/issues/new"
+    package_identifier: Ascending.JarvisRegistryCLI
+    short_description: "Companion CLI for the Jarvis Registry platform."
+    license: "Apache-2.0"
+    homepage: "https://github.com/ascending-llc/jarvis-registry-cli"
+    skip_upload: auto
+    commit_author:
+      name: "ryo"
+      email: "429620+ryohang@users.noreply.github.com"
+    repository:
+      owner: ascending-llc
+      name: winget-pkgs
+      token: "{{ .Env.WINGET_PKGS_TOKEN }}"
+      branch: "jarvis-registry-{{ .Version }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master

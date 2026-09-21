@@ -16,12 +16,20 @@ brew install ascending-llc/jarvis/jarvis-registry
 Upgrade with `brew upgrade jarvis-registry`. Shell completions (bash, zsh, fish) are installed
 automatically; on a fresh install, restart your shell (or open a new terminal) before they take effect.
 
-### Linux / Windows
+### Windows (winget)
+
+```
+winget install Ascending.JarvisRegistryCLI
+```
+
+Upgrade with `winget upgrade Ascending.JarvisRegistryCLI`.
+
+### Linux
 
 Download the archive for your OS+architecture from the
 [releases page](https://github.com/ascending-llc/jarvis-registry-cli/releases), extract it, and place
-the `jarvis-registry` (or `jarvis-registry.exe`) binary on your `PATH`. Repeat the same steps to
-upgrade. Each archive also bundles the `completions/` scripts if you want to source them manually.
+the `jarvis-registry` binary on your `PATH`. Repeat the same steps to upgrade. Each archive also bundles
+the `completions/` scripts if you want to source them manually.
 
 ### Go toolchain
 
