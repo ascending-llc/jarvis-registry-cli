@@ -1,5 +1,11 @@
 .DEFAULT_GOAL := all
 
+CLI_OUTPUT ?= bin/jarvis-registry
+
+build:
+	@go build -o "$(CLI_OUTPUT)" ./cmd/jarvis-registry
+.PHONY: build
+
 test:
 	@go test -race ./...
 .PHONY: test

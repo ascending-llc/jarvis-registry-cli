@@ -180,10 +180,10 @@ linters:
           - gosec
         # paths are built from a t.TempDir() plus package constants, not from untrusted input
         text: 'G304: Potential file inclusion via variable'
-      - path: '^skills/manifest_test\.go$'
+      - path: '^skills/(manifest|skills)_test\.go$'
         linters:
           - gosec
-        # chmod'd on a t.TempDir() to simulate a permission-denied write failure, not a real deployment path
+        # chmod'd only inside t.TempDir() to force write/deletion failures and restore directory access for retry/cleanup
         text: 'G302: Expect file permissions to be 0600 or less'
       - path: '^skills/manifest_test\.go$'
         linters:

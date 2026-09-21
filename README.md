@@ -160,8 +160,14 @@ the link, preserving its target. `-i` always asks, even when override is enabled
 stdin is not a terminal. Both settings have no effect in Claude or project scope.
 
 When a synced skill is renamed or removed, the CLI cleans up links that point directly into its own
-sync root whose targets no longer exist. It leaves unrelated entries and links to other locations
-alone.
+sync root whose targets no longer exist. Cleanup runs before link creation, so a desired skill name
+pointing at a deleted owned target is repaired in the same run, without prompting. It leaves unrelated
+entries and links to other locations alone.
+
+The tool's personal skills directory must not resolve to the same directory as the CLI-owned content
+root. Such a layout is rejected before content sync to prevent replacing skill content with links to
+itself. If replacing a conflicting directory fails partway through deletion, any remaining contents
+stay at the original path: fix the reported filesystem error and retry with replacement enabled.
 
 ## Development
 

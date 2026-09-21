@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -2049,4 +2050,131 @@ func collectRelativeFilePaths(root string) ([]string, error) {
 	})
 
 	return paths, err
+}
+
+func TestSyncCommandRunPersonalScopeRejectsAliasedDirectories(t *testing.T) {
+	for _, mode := range []cfg.SkillsMode{cfg.SkillsModeCodex, cfg.SkillsModeCopilot} {
+		t.Run(string(mode), func(t *testing.T) {
+			ts, _ := newSingleSkillTestServer(t, "personal-1", "hello-skill", 1, Content{Description: "a skill", Body: "Hello.\n"}, false)
+			cmd := buildModeCmd(t, ts, "", mode)
+			cmd.logger = log.New(&bytes.Buffer{}, "", 0)
+			require.NoError(t, cmd.Run())
+
+			entry := filepath.Join(cmd.userHomeDir, "."+string(mode), "skills")
+			require.NoError(t, os.RemoveAll(entry))
+			require.NoError(t, junction.Create(cmd.destDir, entry))
+			cmd.override = true
+
+			marker := filepath.Join(cmd.destDir, "untracked.txt")
+			require.NoError(t, os.WriteFile(marker, []byte("keep"), 0600))
+
+			manifestBefore, err := os.ReadFile(filepath.Join(cmd.destDir, manifestFileName))
+			require.NoError(t, err)
+			skillBefore, err := os.ReadFile(filepath.Join(cmd.destDir, "hello-skill", "SKILL.md"))
+			require.NoError(t, err)
+
+			err = cmd.Run()
+			require.ErrorContains(t, err, "resolves to the content directory")
+			assert.FileExists(t, marker, "reject the layout before content cleanup")
+
+			manifestAfter, err := os.ReadFile(filepath.Join(cmd.destDir, manifestFileName))
+			require.NoError(t, err)
+			assert.Equal(t, manifestBefore, manifestAfter)
+
+			skillAfter, err := os.ReadFile(filepath.Join(cmd.destDir, "hello-skill", "SKILL.md"))
+			require.NoError(t, err)
+			assert.Equal(t, skillBefore, skillAfter)
+		})
+	}
+}
+
+func TestSyncCommandRunPersonalScopeRepairsDanglingCollision(t *testing.T) {
+	for _, mode := range []cfg.SkillsMode{cfg.SkillsModeCodex, cfg.SkillsModeCopilot} {
+		t.Run(string(mode), func(t *testing.T) {
+			ts, _ := newSingleSkillTestServer(t, "personal-1", "hello-skill", 1, Content{Description: "a skill", Body: "Hello.\n"}, false)
+			cmd := buildModeCmd(t, ts, "", mode)
+
+			var output bytes.Buffer
+
+			cmd.logger = log.New(&output, "", 0)
+			cmd.stderrLogger = log.New(&output, "", 0)
+			require.NoError(t, cmd.Run())
+
+			link := filepath.Join(cmd.userHomeDir, "."+string(mode), "skills", "hello-skill")
+			old := filepath.Join(cmd.destDir, "old-name")
+
+			require.NoError(t, os.Remove(link))
+			require.NoError(t, os.Mkdir(old, 0700))
+			require.NoError(t, junction.Create(old, link))
+			require.NoError(t, os.Remove(old))
+
+			cmd.Interactive = true
+			cmd.stdin = strings.NewReader("n\n")
+
+			output.Reset()
+			require.NoError(t, cmd.Run(), "owned dangling links should be repaired in a single sync without override")
+			assert.FileExists(t, filepath.Join(link, "SKILL.md"))
+			rows := parseMarkdownSummaryRows(t, output.String())
+			require.Len(t, rows, 1, "the summary should show the final link result, not an extra removal")
+			assert.Equal(t, linkStatusLinked, findSummaryRow(t, rows, "hello-skill", statusUnchanged)[5])
+			assert.NotContains(t, output.String(), "[y/N]", "owned dangling cleanup must not prompt")
+			assert.NotContains(t, output.String(), "left untouched")
+		})
+	}
+}
+
+func TestSyncCommandRunPersonalScopeRetriesFailedDirectoryReplacement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX directory permissions are required to force a recursive deletion failure")
+	}
+
+	for _, mode := range []cfg.SkillsMode{cfg.SkillsModeCodex, cfg.SkillsModeCopilot} {
+		t.Run(string(mode), func(t *testing.T) {
+			ts, _ := newSingleSkillTestServer(t, "personal-1", "hello-skill", 1, Content{Description: "a skill", Body: "Hello.\n"}, false)
+			cmd := buildModeCmd(t, ts, "", mode)
+			cmd.override = true
+
+			var output bytes.Buffer
+
+			cmd.logger = log.New(&output, "", 0)
+			cmd.stderrLogger = log.New(&output, "", 0)
+			entry := filepath.Join(cmd.userHomeDir, "."+string(mode), "skills")
+			conflict := filepath.Join(entry, "hello-skill")
+			require.NoError(t, os.MkdirAll(conflict, 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(conflict, "SKILL.md"), []byte("mine"), 0600))
+			require.NoError(t, os.Chmod(conflict, 0500))
+			t.Cleanup(func() {
+				entries, _ := os.ReadDir(entry)
+				for _, item := range entries {
+					_ = os.Chmod(filepath.Join(entry, item.Name()), 0700)
+				}
+			})
+
+			probe := filepath.Join(conflict, "permission-probe")
+			if err := os.WriteFile(probe, nil, 0600); err == nil {
+				t.Skip("the current user bypasses directory permissions")
+			}
+
+			require.Error(t, cmd.Run())
+			assert.Equal(t, linkStatusFailed, findSummaryRow(t, parseMarkdownSummaryRows(t, output.String()), "hello-skill", statusCreated)[5])
+
+			entries, err := os.ReadDir(entry)
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			require.Equal(t, "hello-skill", entries[0].Name(), "failed replacement must remain at its original path for retry")
+			require.NoError(t, os.Chmod(conflict, 0700))
+
+			output.Reset()
+			require.NoError(t, cmd.Run())
+
+			entries, err = os.ReadDir(entry)
+			require.NoError(t, err)
+			require.Len(t, entries, 1, "retry must leave no trash in the shared skills directory")
+
+			_, err = os.Readlink(conflict)
+			require.NoError(t, err)
+			assert.FileExists(t, filepath.Join(conflict, "SKILL.md"))
+			assert.Equal(t, linkStatusLinked, findSummaryRow(t, parseMarkdownSummaryRows(t, output.String()), "hello-skill", statusUnchanged)[5])
+		})
+	}
 }

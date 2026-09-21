@@ -306,7 +306,8 @@ func destinationsForMode(mode cfg.SkillsMode, projectPath string) (syncRoot, des
 	return root, filepath.Join(root, "skills")
 }
 
-// Run resolves a Registry access token, then reconciles the local skills
+// Run rejects aliased personal content/link directories, resolves a
+// Registry access token, then reconciles the local skills
 // folder against the Registry: skills no longer accessible are deleted,
 // existing skills are updated in place, and new skills are created,
 // before the sync manifest is rewritten to reflect the new state. A skill
@@ -317,6 +318,12 @@ func destinationsForMode(mode cfg.SkillsMode, projectPath string) (syncRoot, des
 // command's own exit code/output is the only signal of a partial
 // failure — nothing is silently swallowed.
 func (c *SyncCommand) Run() (err error) {
+	if c.personalScope {
+		if _, err = c.checkUserScopeSkillsDir(); err != nil {
+			return err
+		}
+	}
+
 	// initialize the final two dependencies c.client and c.mrw
 	token, err := c.tp.GetAccessToken()
 	if err != nil {
@@ -477,9 +484,12 @@ func (c *SyncCommand) Run() (err error) {
 			names[i] = m.Name
 		}
 
-		reconciled, reconcileErr := c.reconcileSymlinks(names)
+		// A desired name may point at a different, now-deleted owned skill.
+		// Prune first so reconciliation repairs it in this same run. Keep
+		// reconciliation last in the summary's per-name outcome map.
 		pruned, pruneErr := c.pruneDanglingLinks()
-		linkOutcomes = slices.Concat(reconciled, pruned)
+		reconciled, reconcileErr := c.reconcileSymlinks(names)
+		linkOutcomes = slices.Concat(pruned, reconciled)
 		linkErr = errors.Join(reconcileErr, pruneErr, c.removeLegacyWrapperLink(), joinLinkErrors(linkOutcomes))
 	}
 

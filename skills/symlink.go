@@ -91,8 +91,24 @@ func sameLinkPath(a, b string) bool {
 	return aErr == nil && bErr == nil && os.SameFile(aInfo, bInfo)
 }
 
-func (c *SyncCommand) prepareUserScopeSkillsDir() (string, error) {
+// checkUserScopeSkillsDir rejects directory aliases before sync can delete
+// content through the tool's links directory. Recheck before link operations
+// as well, since the directory layout may have changed during content sync.
+func (c *SyncCommand) checkUserScopeSkillsDir() (string, error) {
 	dir, err := userScopeSkillsDir(c.userHomeDir, c.mode)
+	if err != nil {
+		return "", err
+	}
+
+	if sameLinkPath(dir, c.destDir) {
+		return "", fmt.Errorf("personal skills directory %s resolves to the content directory %s; use separate directories for content and links", dir, c.destDir)
+	}
+
+	return dir, nil
+}
+
+func (c *SyncCommand) prepareUserScopeSkillsDir() (string, error) {
+	dir, err := c.checkUserScopeSkillsDir()
 	if err != nil {
 		return "", err
 	}
@@ -148,7 +164,10 @@ func (c *SyncCommand) reconcileSymlink(dir, name string) (string, error) {
 		err = os.Remove(link)
 		status = linkStatusRelinked
 	} else {
-		err = atomicRemoveAll(link)
+		// Keep a failed deletion at its original path so the next sync can
+		// retry. atomicRemoveAll leaves sibling trash that cleanDestDir
+		// cannot collect from this shared, ecosystem-owned directory.
+		err = os.RemoveAll(link)
 	}
 
 	if err != nil {
@@ -237,7 +256,7 @@ func (c *SyncCommand) pruneDanglingLinks() ([]linkOutcome, error) {
 // removeLegacyWrapperLink retires only a wrapper link made by older
 // personal-scope syncs; a user's own same-named entry is left untouched.
 func (c *SyncCommand) removeLegacyWrapperLink() error {
-	dir, err := userScopeSkillsDir(c.userHomeDir, c.mode)
+	dir, err := c.checkUserScopeSkillsDir()
 	if err != nil {
 		return err
 	}
