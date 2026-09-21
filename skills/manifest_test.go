@@ -34,6 +34,23 @@ func TestCodexCopilotWrappersOmitClaudeOnlyFrontmatter(t *testing.T) {
 	}
 }
 
+func TestManifestReadWriterReplacesReadOnlyManifest(t *testing.T) {
+	dir := t.TempDir()
+	mrw := NewManifestReadWriter(dir)
+
+	require.NoError(t, mrw.WriteManifest([]Metadata{{Id: "id-1", Name: "skill-1", Version: 1}}, 1), "first WriteManifest should succeed")
+	require.NoError(t, mrw.WriteManifest([]Metadata{{Id: "id-2", Name: "skill-2", Version: 2}}, 2), "WriteManifest must be able to replace the read-only manifest it previously wrote")
+
+	got, err := mrw.ReadManifest()
+	require.NoError(t, err, "ReadManifest should round-trip the replaced manifest")
+	assert.Equal(t, []ManifestSkill{{Id: "id-2", Name: "skill-2", Version: 2}}, got.Skills)
+	assert.Equal(t, 2, got.SyncSkillsVersion)
+
+	stat, err := os.Stat(filepath.Join(dir, manifestFileName))
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0444), stat.Mode().Perm(), "the replaced manifest should still be read-only")
+}
+
 func TestManifestReadWriterExists(t *testing.T) {
 	dir := t.TempDir()
 	mrw := NewManifestReadWriter(dir)

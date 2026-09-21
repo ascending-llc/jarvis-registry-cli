@@ -13,6 +13,23 @@ permissions:
   contents: read
 
 jobs:
+  windows-personal-scope:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "^1.24.1"
+
+      - name: Test junction dependency
+        run: go test github.com/nyaosorg/go-windows-junction
+
+      - name: Test personal-scope sync and junction lifecycle
+        run: go test -race ./skills -run "Test(Symlink|PruneDanglingLinks|SyncCommandRunPersonalScope|SyncCommandPersonalScopeInteractiveValidation|ManifestReadWriterReplacesReadOnlyManifest)"
+
   test-and-lint:
     runs-on: ubuntu-latest
 

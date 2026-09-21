@@ -6,6 +6,7 @@ require (
 	github.com/alecthomas/kong v1.16.0
 	github.com/cli/oauth v1.2.2
 	github.com/mattn/go-isatty v0.0.20
+	github.com/nyaosorg/go-windows-junction v0.2.0
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
@@ -14,6 +15,7 @@ require (
 )
 
 require (
+	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cli/browser v1.0.0 // indirect
 	github.com/cli/safeexec v1.0.0 // indirect

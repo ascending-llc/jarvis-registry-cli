@@ -15,12 +15,13 @@ import (
 // confirmation, one already carrying this CLI's skill-lock.json marker is
 // trusted silently, and anything else either prompts an interactive user
 // (via c.isTerminal/c.stdin, swappable in tests) for confirmation or fails
-// loudly when stdin isn't a terminal. For codex/copilot modes the prompt
-// carries an extra warning, since their sync root is an ecosystem-shared
-// directory other tools (e.g. `gh skill install`) also write into, so the
-// exposure of managing it is materially higher than for claude's own
-// plugin-owned subtree. This must run before any filesystem mutation,
-// including creating c.syncRoot itself.
+// loudly when stdin isn't a terminal. For project-scope codex/copilot the
+// prompt carries an extra warning, since that sync root is an
+// ecosystem-shared directory other tools (e.g. `gh skill install`) also
+// write into, so the exposure of managing it is materially higher than for
+// claude's plugin-owned subtree or a personal-scope CLI-owned root. This
+// must run before any filesystem mutation, including creating c.syncRoot
+// itself.
 func (c *SyncCommand) ensureSyncRootConsent() error {
 	if _, err := os.Stat(c.syncRoot); errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -38,7 +39,7 @@ func (c *SyncCommand) ensureSyncRootConsent() error {
 	}
 
 	warning := ""
-	if c.mode != cfg.SkillsModeClaude {
+	if c.mode != cfg.SkillsModeClaude && !c.personalScope {
 		warning = " Note: this folder may also be managed directly by other tools (e.g. `gh skill install`) or contain skills you wrote by hand — anything not tracked by this CLI's own sync will be deleted on future syncs."
 	}
 

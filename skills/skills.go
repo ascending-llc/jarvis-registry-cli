@@ -45,19 +45,26 @@ type (
 	// caller on the Registry, creating, updating, and deleting local
 	// skill folders as needed.
 	SyncCommand struct { //nolint:govet // fieldalignment: keep the exported CLI arguments first and related configuration fields together.
-		// ProjectPath is the directory skills are synced under. For claude
-		// mode this is <ProjectPath>/.claude/skills/jarvis-registry/; for
-		// codex and copilot it is <ProjectPath>/.agents/skills/ and
-		// <ProjectPath>/.github/skills/ respectively. Optional for claude
-		// (defaults to the user's home directory, personal scope) but
-		// required for codex/copilot. Relative paths (including "." for the
-		// current directory) resolve against the current working directory.
-		ProjectPath string `arg:"" optional:"" help:"Directory skills are synced under. claude mode uses <path>/.claude/skills/jarvis-registry/ (optional, defaults to the user's home directory); codex uses <path>/.agents/skills/ and copilot <path>/.github/skills/ (required). Relative paths (including \".\") resolve against the current working directory."`
+		// ProjectPath is the directory skills are synced under. Omit it for
+		// personal scope: claude writes into ~/.claude/skills/jarvis-registry/;
+		// codex/copilot write into ~/.jarvis-registry/skills/<mode>/ and link
+		// into ~/.codex/skills/ or ~/.copilot/skills/. With an explicit path,
+		// claude uses <path>/.claude/skills/jarvis-registry/, codex
+		// <path>/.agents/skills/, and copilot <path>/.github/skills/. Relative
+		// paths (including "." for the current directory) resolve against the
+		// current working directory. Codex/copilot still refuse an explicit
+		// home-directory path; omit the argument instead.
+		ProjectPath string `arg:"" optional:"" help:"Project directory to sync under (relative paths, including \".\", resolve against the current working directory). Omit for personal scope: claude uses ~/.claude/skills/jarvis-registry/; codex/copilot use ~/.jarvis-registry/skills/<mode>/ with links under ~/.codex/skills/ or ~/.copilot/skills/. With a path, codex uses <path>/.agents/skills/ and copilot <path>/.github/skills/."`
 
 		// Mode selects the skills-directory convention to target. It
 		// overrides local.skills.mode from config; one of the two must
 		// resolve to a value.
 		Mode string `optional:"" help:"Skills sync mode: claude, codex, or copilot. Overrides local.skills.mode from config; one of the two must resolve to a value."`
+
+		// Interactive prompts before replacing a colliding entry when
+		// reconciling personal-scope Codex/Copilot skill links. It has no
+		// effect in claude mode or when a project path is given.
+		Interactive bool `short:"i" help:"For personal-scope codex/copilot sync, prompt before replacing an existing file/folder/symlink that collides with a skill's symlink. No effect for claude mode or when a project path is given. Defaults to off."`
 
 		logger         Logger
 		stdin          io.Reader
@@ -76,6 +83,8 @@ type (
 		syncRoot       string
 		registryDir    string
 		mode           cfg.SkillsMode
+		personalScope  bool
+		override       bool
 	}
 
 	// SyncSpec describes one skill's local and remote state, as compared
@@ -115,13 +124,15 @@ type (
 	}
 
 	// summaryRow is one row of the sync summary table Run prints when it
-	// finishes.
+	// finishes. Link is populated only for personal-scope Codex/Copilot
+	// runs.
 	summaryRow struct {
 		Skill    string
 		Status   string
 		Previous string
 		Current  string
 		Notes    string
+		Link     string
 	}
 )
 
@@ -184,8 +195,7 @@ func (c *SyncCommand) BeforeReset() (err error) {
 
 // AfterApply derives SyncCommand's remaining dependencies. Config is
 // loaded first because the sync destination now depends on the resolved
-// mode (flag over config), and codex/copilot require a project directory
-// and refuse the personal-scope home root.
+// mode (flag over config) and whether a project path was supplied.
 func (c *SyncCommand) AfterApply() (err error) {
 	c.registryDir = filepath.Join(c.userHomeDir, cfg.RegistryDirName)
 
@@ -198,26 +208,33 @@ func (c *SyncCommand) AfterApply() (err error) {
 		return err
 	}
 
-	if c.mode != cfg.SkillsModeClaude && strings.TrimSpace(c.ProjectPath) == "" {
-		return fmt.Errorf("a project directory is required in %s mode; pass one, e.g. `jarvis-registry skills sync . --mode %s`", c.mode, c.mode)
+	c.personalScope = c.mode != cfg.SkillsModeClaude && strings.TrimSpace(c.ProjectPath) == ""
+	if c.personalScope {
+		c.syncRoot = personalScopeSyncRoot(c.registryDir, c.mode)
+		c.destDir = c.syncRoot
+	} else {
+		resolvedProjectPath, resolveErr := resolveProjectPath(c.ProjectPath)
+		if resolveErr != nil {
+			return fmt.Errorf("invalid project path %q: %s", c.ProjectPath, resolveErr.Error())
+		}
+
+		if c.mode != cfg.SkillsModeClaude && isHomeDir(resolvedProjectPath, c.userHomeDir) {
+			return fmt.Errorf("%s mode does not support syncing into the user's home directory as a project; omit the path for personal scope", c.mode)
+		}
+
+		c.syncRoot, c.destDir = destinationsForMode(c.mode, resolvedProjectPath)
 	}
 
-	resolvedProjectPath, err := resolveProjectPath(c.ProjectPath)
-	if err != nil {
-		return fmt.Errorf("invalid project path %q: %s", c.ProjectPath, err.Error())
+	if c.personalScope && c.Interactive && !c.isTerminal() {
+		return errors.New("-i/--interactive was passed but stdin is not a terminal; drop the flag or run from an interactive terminal")
 	}
-
-	if c.mode != cfg.SkillsModeClaude && isHomeDir(resolvedProjectPath, c.userHomeDir) {
-		return fmt.Errorf("%s mode does not support syncing into the user's home directory (personal scope); pass a project directory", c.mode)
-	}
-
-	c.syncRoot, c.destDir = destinationsForMode(c.mode, resolvedProjectPath)
 
 	c.baseUrl = config.Registry.BaseUrl
 
 	c.authBaseUrl = config.Registry.AuthBaseUrl
 
 	c.skipIds = config.Local.Skills.SkipIds
+	c.override = config.Local.Skills.Link.Override
 
 	c.tp = auth.NewRegistryTokenResolver(c.authBaseUrl, auth.RegistryScopes, c.logger)
 
@@ -289,7 +306,8 @@ func destinationsForMode(mode cfg.SkillsMode, projectPath string) (syncRoot, des
 	return root, filepath.Join(root, "skills")
 }
 
-// Run resolves a Registry access token, then reconciles the local skills
+// Run rejects aliased personal content/link directories, resolves a
+// Registry access token, then reconciles the local skills
 // folder against the Registry: skills no longer accessible are deleted,
 // existing skills are updated in place, and new skills are created,
 // before the sync manifest is rewritten to reflect the new state. A skill
@@ -300,6 +318,12 @@ func destinationsForMode(mode cfg.SkillsMode, projectPath string) (syncRoot, des
 // command's own exit code/output is the only signal of a partial
 // failure — nothing is silently swallowed.
 func (c *SyncCommand) Run() (err error) {
+	if c.personalScope {
+		if _, err = c.checkUserScopeSkillsDir(); err != nil {
+			return err
+		}
+	}
+
 	// initialize the final two dependencies c.client and c.mrw
 	token, err := c.tp.GetAccessToken()
 	if err != nil {
@@ -449,9 +473,29 @@ func (c *SyncCommand) Run() (err error) {
 		return fmt.Errorf("failed to write manifest file after syncing: %s", err.Error())
 	}
 
-	c.printSummary(firstTime, toCreate, createOutcomes, toUpdate, updateOutcomes, toDelete, skippedSkills)
+	var (
+		linkOutcomes []linkOutcome
+		linkErr      error
+	)
 
-	return errors.Join(joinErrors(updateOutcomes), joinErrors(createOutcomes))
+	if c.personalScope {
+		names := make([]string, len(succeeded))
+		for i, m := range succeeded {
+			names[i] = m.Name
+		}
+
+		// A desired name may point at a different, now-deleted owned skill.
+		// Prune first so reconciliation repairs it in this same run. Keep
+		// reconciliation last in the summary's per-name outcome map.
+		pruned, pruneErr := c.pruneDanglingLinks()
+		reconciled, reconcileErr := c.reconcileSymlinks(names)
+		linkOutcomes = slices.Concat(pruned, reconciled)
+		linkErr = errors.Join(reconcileErr, pruneErr, c.removeLegacyWrapperLink(), joinLinkErrors(linkOutcomes))
+	}
+
+	c.printSummary(firstTime, toCreate, createOutcomes, toUpdate, updateOutcomes, toDelete, skippedSkills, linkOutcomes)
+
+	return errors.Join(joinErrors(updateOutcomes), joinErrors(createOutcomes), linkErr)
 }
 
 // partitionSkippableSkills splits remote into skills this run will sync and
@@ -887,13 +931,23 @@ func (c *SyncCommand) deleteMany(specs []SyncSpec) error {
 	}))
 }
 
-// printSummary prints, via c.logger, the first-time sync banner (only
-// when firstTime is true) followed by the sync summary table. For claude
-// mode firstTime tracks a brand-new .claude-plugin/plugin.json — the one
-// condition Claude Code's docs confirm needs a new session, decoupled from
-// whether c.destDir itself happened to already exist; for codex/copilot it
-// tracks the manifest's own first appearance in the destination.
-func (c *SyncCommand) printSummary(firstTime bool, toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec, skipped []skippedSkill) {
+// printSummary prints, via c.logger, a scope line for Codex/Copilot, the
+// first-time sync banner (only when firstTime is true), then the sync
+// summary table. For claude mode firstTime tracks a brand-new
+// .claude-plugin/plugin.json — the one condition Claude Code's docs
+// confirm needs a new session, decoupled from whether c.destDir itself
+// happened to already exist; for codex/copilot it tracks the manifest's
+// own first appearance in the destination.
+func (c *SyncCommand) printSummary(firstTime bool, toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec, skipped []skippedSkill, links []linkOutcome) {
+	if c.mode != cfg.SkillsModeClaude {
+		scope := "project"
+		if c.personalScope {
+			scope = "personal"
+		}
+
+		c.logger.Printf("Sync scope: %s (%s)", scope, c.syncRoot)
+	}
+
 	if firstTime {
 		switch c.mode {
 		case cfg.SkillsModeClaude:
@@ -905,13 +959,18 @@ func (c *SyncCommand) printSummary(firstTime bool, toCreate []SyncSpec, createOu
 		c.logger.Println()
 	}
 
-	rows := c.buildSummaryRows(toCreate, createOutcomes, toUpdate, updateOutcomes, toDelete, skipped)
+	rows := c.buildSummaryRows(toCreate, createOutcomes, toUpdate, updateOutcomes, toDelete, skipped, links)
 
 	var buf bytes.Buffer
 
 	table := tablewriter.NewTable(&buf, tablewriter.WithRenderer(renderer.NewMarkdown()), tablewriter.WithHeaderAutoFormat(tw.Off))
 
-	table.Header([]string{"Skill", "Status", "Previous Version", "Current Version", "Notes"})
+	header := []string{"Skill", "Status", "Previous Version", "Current Version", "Notes"}
+	if c.personalScope {
+		header = append(header, "Link")
+	}
+
+	table.Header(header)
 
 	_ = table.Bulk(rows)
 
@@ -924,7 +983,7 @@ func (c *SyncCommand) printSummary(firstTime bool, toCreate []SyncSpec, createOu
 // toCreate, toUpdate, and toDelete plus one per skipped skill, grouped by
 // status in the order Created, Updated, Unchanged, Removed, Failed,
 // Skipped, and sorted alphabetically by skill name within each group.
-func (c *SyncCommand) buildSummaryRows(toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec, skipped []skippedSkill) [][]string {
+func (c *SyncCommand) buildSummaryRows(toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec, skipped []skippedSkill, links []linkOutcome) [][]string {
 	var created, updated, unchanged, removed, failed, skippedRows []summaryRow
 
 	for i, spec := range toCreate {
@@ -961,17 +1020,75 @@ func (c *SyncCommand) buildSummaryRows(toCreate []SyncSpec, createOutcomes []Syn
 
 	groups := [][]summaryRow{created, updated, unchanged, removed, failed, skippedRows}
 
-	rows := make([][]string, 0, len(toCreate)+len(toUpdate)+len(toDelete)+len(skipped))
+	var ordered []summaryRow
 
 	for _, group := range groups {
 		sort.Slice(group, func(i, j int) bool { return group[i].Skill < group[j].Skill })
 
-		for _, r := range group {
-			rows = append(rows, []string{r.Skill, r.Status, r.Previous, r.Current, escapePipe(r.Notes)})
+		ordered = append(ordered, group...)
+	}
+
+	return c.renderSummaryRows(ordered, links)
+}
+
+// renderSummaryRows joins link results onto matching content rows and adds
+// rows for dangling-link cleanup names without a corresponding removal.
+func (c *SyncCommand) renderSummaryRows(content []summaryRow, links []linkOutcome) [][]string {
+	byName := make(map[string]linkOutcome, len(links))
+	for _, link := range links {
+		byName[link.Name] = link
+	}
+
+	represented := make(map[string]bool, len(content))
+	for _, row := range content {
+		if link, ok := byName[row.Skill]; ok && linkAppliesToRow(row, link) {
+			represented[row.Skill] = true
 		}
 	}
 
+	var extra []summaryRow
+	if c.personalScope {
+		for name := range byName {
+			if !represented[name] {
+				extra = append(extra, summaryRow{Skill: name, Status: "-", Previous: "-", Current: "-", Notes: "dangling link cleanup"})
+			}
+		}
+	}
+
+	sort.Slice(extra, func(i, j int) bool { return extra[i].Skill < extra[j].Skill })
+
+	rows := make([][]string, 0, len(content)+len(extra))
+	for _, row := range slices.Concat(content, extra) {
+		row.Link = "-"
+		if link, ok := byName[row.Skill]; c.personalScope && ok && linkAppliesToRow(row, link) {
+			row.Link = link.Status
+			if link.Err != nil {
+				row.Notes = strings.TrimPrefix(row.Notes+"; "+link.Err.Error(), "; ")
+			}
+		}
+
+		cells := []string{row.Skill, row.Status, row.Previous, row.Current, escapePipe(row.Notes)}
+		if c.personalScope {
+			cells = append(cells, row.Link)
+		}
+
+		rows = append(rows, cells)
+	}
+
 	return rows
+}
+
+func linkAppliesToRow(row summaryRow, link linkOutcome) bool {
+	switch row.Status {
+	case statusCreated, statusUpdated, statusUnchanged:
+		return link.Status != linkStatusRemoved
+	case statusRemoved:
+		return link.Status == linkStatusRemoved
+	case "-":
+		return true
+	default:
+		return false
+	}
 }
 
 // escapePipe backslash-escapes every "|" in s. Unlike a skill name (see

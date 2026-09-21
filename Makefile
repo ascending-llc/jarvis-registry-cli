@@ -1,8 +1,22 @@
 .DEFAULT_GOAL := all
 
+CLI_OUTPUT ?= bin/jarvis-registry
+
+build:
+	@go build -o "$(CLI_OUTPUT)" ./cmd/jarvis-registry
+.PHONY: build
+
 test:
 	@go test -race ./...
 .PHONY: test
+
+test-personal-scope:
+	@go test -race ./skills -run 'Test(Symlink|PruneDanglingLinks|SyncCommandRunPersonalScope|SyncCommandPersonalScopeInteractiveValidation|ManifestReadWriterReplacesReadOnlyManifest)'
+.PHONY: test-personal-scope
+
+test-junction:
+	@go test github.com/nyaosorg/go-windows-junction
+.PHONY: test-junction
 
 coverage:
 	@go test -race -coverprofile=coverage.out ./...

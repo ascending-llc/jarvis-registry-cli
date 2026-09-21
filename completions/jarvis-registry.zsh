@@ -25,6 +25,7 @@ _jarvis-registry_skills_sync() {
     _arguments \
         '(-h --help)'{-h,--help}'[Show context-sensitive help.]' \
         '--mode[Skills sync mode.]:mode:(claude codex copilot)' \
+        '(-i --interactive)'{-i,--interactive}'[Prompt before replacing personal-scope skill link collisions.]' \
         '1:project directory:_files -/'
 }
 
