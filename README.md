@@ -63,9 +63,9 @@ the `--mode` flag (the flag wins when both are set):
 
 All three modes use personal scope when the path is omitted, making skills available across projects
 without writing under any project directory. Codex/Copilot keep content in a CLI-owned directory and
-create one link per skill (including the built-in `sync-skills` wrapper) in the tool's personal skills
-directory (`~/.codex/skills/` or `~/.copilot/skills/`). On Windows these are directory junctions;
-elsewhere they are symbolic links.
+create one link per Registry skill in the tool's personal skills directory (`~/.codex/skills/` or
+`~/.copilot/skills/`). The built-in `sync-skills` wrapper stays in the CLI-owned directory and is not
+linked. On Windows these are directory junctions; elsewhere they are symbolic links.
 
 An explicit path selects project scope. Relative paths, including `.`, resolve against the current
 working directory. Codex/Copilot still refuse an explicit home-directory path; omit the path instead

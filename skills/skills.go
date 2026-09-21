@@ -472,17 +472,15 @@ func (c *SyncCommand) Run() (err error) {
 	)
 
 	if c.personalScope {
-		names := make([]string, 0, len(succeeded)+1)
-
-		names = append(names, reservedSyncSkillsName)
-		for _, m := range succeeded {
-			names = append(names, m.Name)
+		names := make([]string, len(succeeded))
+		for i, m := range succeeded {
+			names[i] = m.Name
 		}
 
 		reconciled, reconcileErr := c.reconcileSymlinks(names)
 		pruned, pruneErr := c.pruneDanglingLinks()
 		linkOutcomes = slices.Concat(reconciled, pruned)
-		linkErr = errors.Join(reconcileErr, pruneErr, joinLinkErrors(linkOutcomes))
+		linkErr = errors.Join(reconcileErr, pruneErr, c.removeLegacyWrapperLink(), joinLinkErrors(linkOutcomes))
 	}
 
 	c.printSummary(firstTime, toCreate, createOutcomes, toUpdate, updateOutcomes, toDelete, skippedSkills, linkOutcomes)
@@ -1023,9 +1021,8 @@ func (c *SyncCommand) buildSummaryRows(toCreate []SyncSpec, createOutcomes []Syn
 	return c.renderSummaryRows(ordered, links)
 }
 
-// renderSummaryRows joins link results onto content rows and adds rows
-// for the built-in wrapper and dangling-link cleanup names that have no
-// corresponding content change.
+// renderSummaryRows joins link results onto matching content rows and adds
+// rows for dangling-link cleanup names without a corresponding removal.
 func (c *SyncCommand) renderSummaryRows(content []summaryRow, links []linkOutcome) [][]string {
 	byName := make(map[string]linkOutcome, len(links))
 	for _, link := range links {
@@ -1034,19 +1031,16 @@ func (c *SyncCommand) renderSummaryRows(content []summaryRow, links []linkOutcom
 
 	represented := make(map[string]bool, len(content))
 	for _, row := range content {
-		represented[row.Skill] = true
+		if link, ok := byName[row.Skill]; ok && linkAppliesToRow(row, link) {
+			represented[row.Skill] = true
+		}
 	}
 
 	var extra []summaryRow
 	if c.personalScope {
 		for name := range byName {
 			if !represented[name] {
-				note := "dangling link cleanup"
-				if name == reservedSyncSkillsName {
-					note = "built-in sync-skills wrapper"
-				}
-
-				extra = append(extra, summaryRow{Skill: name, Status: "-", Previous: "-", Current: "-", Notes: note})
+				extra = append(extra, summaryRow{Skill: name, Status: "-", Previous: "-", Current: "-", Notes: "dangling link cleanup"})
 			}
 		}
 	}
@@ -1056,7 +1050,7 @@ func (c *SyncCommand) renderSummaryRows(content []summaryRow, links []linkOutcom
 	rows := make([][]string, 0, len(content)+len(extra))
 	for _, row := range slices.Concat(content, extra) {
 		row.Link = "-"
-		if link, ok := byName[row.Skill]; c.personalScope && ok {
+		if link, ok := byName[row.Skill]; c.personalScope && ok && linkAppliesToRow(row, link) {
 			row.Link = link.Status
 			if link.Err != nil {
 				row.Notes = strings.TrimPrefix(row.Notes+"; "+link.Err.Error(), "; ")
@@ -1072,6 +1066,19 @@ func (c *SyncCommand) renderSummaryRows(content []summaryRow, links []linkOutcom
 	}
 
 	return rows
+}
+
+func linkAppliesToRow(row summaryRow, link linkOutcome) bool {
+	switch row.Status {
+	case statusCreated, statusUpdated, statusUnchanged:
+		return link.Status != linkStatusRemoved
+	case statusRemoved:
+		return link.Status == linkStatusRemoved
+	case "-":
+		return true
+	default:
+		return false
+	}
 }
 
 // escapePipe backslash-escapes every "|" in s. Unlike a skill name (see

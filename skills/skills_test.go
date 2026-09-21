@@ -465,10 +465,11 @@ func TestSyncCommandRunPersonalScope(t *testing.T) {
 			assert.Equal(t, root, cmd.destDir)
 			assert.True(t, cmd.personalScope)
 
-			for _, name := range []string{"hello-skill", reservedSyncSkillsName} {
-				assert.FileExists(t, filepath.Join(root, name, "SKILL.md"))
-				assert.FileExists(t, filepath.Join(entry, name, "SKILL.md"))
-			}
+			assert.FileExists(t, filepath.Join(root, "hello-skill", "SKILL.md"))
+			assert.FileExists(t, filepath.Join(root, reservedSyncSkillsName, "SKILL.md"))
+			assert.FileExists(t, filepath.Join(entry, "hello-skill", "SKILL.md"))
+			_, err := os.Lstat(filepath.Join(entry, reservedSyncSkillsName))
+			assert.ErrorIs(t, err, fs.ErrNotExist, "the built-in wrapper must remain in the CLI-owned root")
 
 			assert.Contains(t, output.String(), "Sync scope: personal ("+root+")")
 			assert.Equal(t, []string{"Skill", "Status", "Previous Version", "Current Version", "Notes", "Link"}, parseMarkdownSummaryHeader(t, output.String()))
@@ -477,17 +478,65 @@ func TestSyncCommandRunPersonalScope(t *testing.T) {
 			created := findSummaryRow(t, rows, "hello-skill", statusCreated)
 			require.Len(t, created, 6)
 			assert.Equal(t, linkStatusLinked, created[5])
-			wrapper := findSummaryRow(t, rows, reservedSyncSkillsName, "-")
-			assert.Equal(t, linkStatusLinked, wrapper[5])
-			assert.Contains(t, wrapper[4], "built-in sync-skills wrapper")
+			assert.Len(t, rows, 1, "the wrapper must not appear as a linked Registry skill")
 
 			output.Reset()
 			require.NoError(t, cmd.Run())
 			rows = parseMarkdownSummaryRows(t, output.String())
 			unchanged := findSummaryRow(t, rows, "hello-skill", statusUnchanged)
 			assert.Equal(t, linkStatusUnchanged, unchanged[5])
-			wrapper = findSummaryRow(t, rows, reservedSyncSkillsName, "-")
-			assert.Equal(t, linkStatusUnchanged, wrapper[5])
+			assert.Len(t, rows, 1)
+		})
+	}
+}
+
+func TestSyncCommandRunPersonalScopePreservesForeignWrapper(t *testing.T) {
+	for _, mode := range []cfg.SkillsMode{cfg.SkillsModeCodex, cfg.SkillsModeCopilot} {
+		for _, kind := range []string{"directory", "link"} {
+			t.Run(string(mode)+"/"+kind, func(t *testing.T) {
+				ts, _ := newSingleSkillTestServer(t, "personal-1", "hello-skill", 1, Content{Description: "a skill", Body: "Hello.\n"}, false)
+				cmd := buildModeCmd(t, ts, "", mode)
+				cmd.override = true
+				cmd.logger = log.New(&bytes.Buffer{}, "", 0)
+
+				wrapper := filepath.Join(cmd.userHomeDir, "."+string(mode), "skills", reservedSyncSkillsName)
+
+				foreign := wrapper
+				if kind == "link" {
+					foreign = t.TempDir()
+					require.NoError(t, os.MkdirAll(filepath.Dir(wrapper), 0700))
+					require.NoError(t, junction.Create(foreign, wrapper))
+				} else {
+					require.NoError(t, os.MkdirAll(wrapper, 0700))
+				}
+
+				require.NoError(t, os.WriteFile(filepath.Join(foreign, "keep"), []byte("mine"), 0600))
+
+				require.NoError(t, cmd.Run())
+				assert.FileExists(t, filepath.Join(wrapper, "keep"), "override must apply only to Registry skills")
+			})
+		}
+	}
+}
+
+func TestSyncCommandRunPersonalScopeRemovesLegacyWrapperLink(t *testing.T) {
+	for _, mode := range []cfg.SkillsMode{cfg.SkillsModeCodex, cfg.SkillsModeCopilot} {
+		t.Run(string(mode), func(t *testing.T) {
+			ts, _ := newSingleSkillTestServer(t, "personal-1", "hello-skill", 1, Content{Description: "a skill", Body: "Hello.\n"}, false)
+			cmd := buildModeCmd(t, ts, "", mode)
+			cmd.logger = log.New(&bytes.Buffer{}, "", 0)
+			require.NoError(t, cmd.Run())
+
+			wrapper := filepath.Join(cmd.userHomeDir, "."+string(mode), "skills", reservedSyncSkillsName)
+			_, err := os.Lstat(wrapper)
+			require.ErrorIs(t, err, fs.ErrNotExist)
+			require.NoError(t, junction.Create(filepath.Join(cmd.destDir, reservedSyncSkillsName), wrapper))
+
+			require.NoError(t, cmd.Run())
+
+			_, err = os.Lstat(wrapper)
+			assert.ErrorIs(t, err, fs.ErrNotExist, "a wrapper link created by the previous version should be retired")
+			assert.FileExists(t, filepath.Join(cmd.destDir, reservedSyncSkillsName, "SKILL.md"))
 		})
 	}
 }
@@ -561,6 +610,9 @@ func TestSyncCommandRunPersonalScopeRenameAndDelete(t *testing.T) {
 			_, err = os.Lstat(filepath.Join(entry, "new-name"))
 			assert.ErrorIs(t, err, fs.ErrNotExist)
 			assert.Contains(t, output.String(), "Removed")
+			rows := parseMarkdownSummaryRows(t, output.String())
+			assert.Equal(t, linkStatusRemoved, findSummaryRow(t, rows, "new-name", statusRemoved)[5])
+			assert.Equal(t, "-", findSummaryRow(t, rows, "new-name", statusSkipped)[5], "a skipped Registry skill had no link reconciliation")
 			assert.FileExists(t, filepath.Join(foreign, "keep"))
 		})
 	}
@@ -628,8 +680,10 @@ func TestSyncCommandRunPersonalScopeContentFailure(t *testing.T) {
 	require.Error(t, cmd.Run())
 
 	entry := filepath.Join(cmd.userHomeDir, ".codex", "skills")
-	assert.FileExists(t, filepath.Join(entry, "sync-skills", "SKILL.md"))
-	_, err := os.Lstat(filepath.Join(entry, "broken"))
+	assert.FileExists(t, filepath.Join(cmd.destDir, reservedSyncSkillsName, "SKILL.md"))
+	_, err := os.Lstat(filepath.Join(entry, reservedSyncSkillsName))
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	_, err = os.Lstat(filepath.Join(entry, "broken"))
 	assert.ErrorIs(t, err, fs.ErrNotExist)
 
 	row := findSummaryRow(t, parseMarkdownSummaryRows(t, output.String()), "broken", statusFailed)

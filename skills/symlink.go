@@ -234,6 +234,32 @@ func (c *SyncCommand) pruneDanglingLinks() ([]linkOutcome, error) {
 	return outcomes, nil
 }
 
+// removeLegacyWrapperLink retires only a wrapper link made by older
+// personal-scope syncs; a user's own same-named entry is left untouched.
+func (c *SyncCommand) removeLegacyWrapperLink() error {
+	dir, err := userScopeSkillsDir(c.userHomeDir, c.mode)
+	if err != nil {
+		return err
+	}
+
+	link := filepath.Join(dir, reservedSyncSkillsName)
+
+	target, err := readLinkTarget(link)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil || target == "" || !sameLinkPath(target, filepath.Join(c.destDir, reservedSyncSkillsName)) {
+		return err
+	}
+
+	if err = os.Remove(link); err != nil {
+		return fmt.Errorf("failed to remove legacy wrapper link %s: %s", link, err.Error())
+	}
+
+	return nil
+}
+
 func newLinkOutcome(name, status string, err error) linkOutcome {
 	if err != nil {
 		return linkOutcome{Name: name, Status: linkStatusFailed, Err: fmt.Errorf("skill %s link failed: %s", name, err.Error())}
