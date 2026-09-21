@@ -268,8 +268,12 @@ func (c *SyncCommand) removeLegacyWrapperLink() error {
 		return nil
 	}
 
-	if err != nil || target == "" || !sameLinkPath(target, filepath.Join(c.destDir, reservedSyncSkillsName)) {
-		return err
+	if err != nil {
+		return fmt.Errorf("failed to inspect legacy wrapper link %s: %s", link, err.Error())
+	}
+
+	if target == "" || !sameLinkPath(target, filepath.Join(c.destDir, reservedSyncSkillsName)) {
+		return nil
 	}
 
 	if err = os.Remove(link); err != nil {
