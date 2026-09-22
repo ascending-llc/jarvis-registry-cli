@@ -469,8 +469,9 @@ func TestSyncCommandRunPersonalScope(t *testing.T) {
 			assert.FileExists(t, filepath.Join(root, "hello-skill", "SKILL.md"))
 			assert.FileExists(t, filepath.Join(root, reservedSyncSkillsName, "SKILL.md"))
 			assert.FileExists(t, filepath.Join(entry, "hello-skill", "SKILL.md"))
-			_, err := os.Lstat(filepath.Join(entry, reservedSyncSkillsName))
-			assert.ErrorIs(t, err, fs.ErrNotExist, "the built-in wrapper must remain in the CLI-owned root")
+			wrapperContent, err := os.ReadFile(filepath.Join(entry, reservedSyncSkillsName, "SKILL.md"))
+			require.NoError(t, err)
+			assert.Equal(t, wrapperContentForMode(mode), wrapperContent)
 
 			assert.Contains(t, output.String(), "Sync scope: personal ("+root+")")
 			assert.Equal(t, []string{"Skill", "Status", "Previous Version", "Current Version", "Notes", "Link"}, parseMarkdownSummaryHeader(t, output.String()))
@@ -479,65 +480,95 @@ func TestSyncCommandRunPersonalScope(t *testing.T) {
 			created := findSummaryRow(t, rows, "hello-skill", statusCreated)
 			require.Len(t, created, 6)
 			assert.Equal(t, linkStatusLinked, created[5])
-			assert.Len(t, rows, 1, "the wrapper must not appear as a linked Registry skill")
+			wrapper := findSummaryRow(t, rows, reservedSyncSkillsName, "-")
+			assert.Equal(t, "built-in sync-skills wrapper", wrapper[4])
+			assert.Equal(t, linkStatusLinked, wrapper[5])
+			assert.Len(t, rows, 2)
 
 			output.Reset()
 			require.NoError(t, cmd.Run())
 			rows = parseMarkdownSummaryRows(t, output.String())
 			unchanged := findSummaryRow(t, rows, "hello-skill", statusUnchanged)
 			assert.Equal(t, linkStatusUnchanged, unchanged[5])
-			assert.Len(t, rows, 1)
+			assert.Equal(t, linkStatusUnchanged, findSummaryRow(t, rows, reservedSyncSkillsName, "-")[5])
+			assert.Len(t, rows, 2)
 		})
 	}
 }
 
-func TestSyncCommandRunPersonalScopePreservesForeignWrapper(t *testing.T) {
+func TestSyncCommandRunPersonalScopeWrapperCollision(t *testing.T) {
 	for _, mode := range []cfg.SkillsMode{cfg.SkillsModeCodex, cfg.SkillsModeCopilot} {
-		for _, kind := range []string{"directory", "link"} {
-			t.Run(string(mode)+"/"+kind, func(t *testing.T) {
+		for _, tc := range []struct {
+			name        string
+			answer      string
+			want        string
+			override    bool
+			interactive bool
+		}{
+			{name: "default protects", want: linkStatusSkipped},
+			{name: "override replaces", override: true, want: linkStatusRelinked},
+			{name: "interactive decline beats override", override: true, interactive: true, answer: "n\n", want: linkStatusSkipped},
+			{name: "interactive confirmation replaces", interactive: true, answer: "y\n", want: linkStatusRelinked},
+		} {
+			t.Run(string(mode)+"/"+tc.name, func(t *testing.T) {
 				ts, _ := newSingleSkillTestServer(t, "personal-1", "hello-skill", 1, Content{Description: "a skill", Body: "Hello.\n"}, false)
 				cmd := buildModeCmd(t, ts, "", mode)
-				cmd.override = true
-				cmd.logger = log.New(&bytes.Buffer{}, "", 0)
+				cmd.override, cmd.Interactive = tc.override, tc.interactive
+				cmd.stdin = strings.NewReader(tc.answer)
 
+				var output bytes.Buffer
+
+				cmd.logger = log.New(&output, "", 0)
+				cmd.stderrLogger = log.New(&output, "", 0)
 				wrapper := filepath.Join(cmd.userHomeDir, "."+string(mode), "skills", reservedSyncSkillsName)
-
-				foreign := wrapper
-				if kind == "link" {
-					foreign = t.TempDir()
-					require.NoError(t, os.MkdirAll(filepath.Dir(wrapper), 0700))
-					require.NoError(t, junction.Create(foreign, wrapper))
-				} else {
-					require.NoError(t, os.MkdirAll(wrapper, 0700))
-				}
-
-				require.NoError(t, os.WriteFile(filepath.Join(foreign, "keep"), []byte("mine"), 0600))
+				foreign := t.TempDir()
+				marker := filepath.Join(foreign, "keep")
+				require.NoError(t, os.WriteFile(marker, []byte("mine"), 0600))
+				require.NoError(t, os.MkdirAll(filepath.Dir(wrapper), 0700))
+				require.NoError(t, junction.Create(foreign, wrapper))
 
 				require.NoError(t, cmd.Run())
-				assert.FileExists(t, filepath.Join(wrapper, "keep"), "override must apply only to Registry skills")
+				row := findSummaryRow(t, parseMarkdownSummaryRows(t, output.String()), reservedSyncSkillsName, "-")
+				assert.Equal(t, "built-in sync-skills wrapper", row[4])
+				assert.Equal(t, tc.want, row[5])
+				assert.Equal(t, tc.interactive, strings.Contains(output.String(), "[y/N]"))
+				assert.FileExists(t, marker, "replacing the wrapper link must preserve the foreign target")
+
+				wantTarget := foreign
+				if tc.want == linkStatusRelinked {
+					wantTarget = filepath.Join(cmd.destDir, reservedSyncSkillsName)
+				}
+
+				target, err := readLinkTarget(wrapper)
+				require.NoError(t, err)
+				assert.True(t, sameLinkPath(target, wantTarget))
 			})
 		}
 	}
 }
 
-func TestSyncCommandRunPersonalScopeRemovesLegacyWrapperLink(t *testing.T) {
+func TestSyncCommandRunPersonalScopeUpgradesStaleWrapper(t *testing.T) {
 	for _, mode := range []cfg.SkillsMode{cfg.SkillsModeCodex, cfg.SkillsModeCopilot} {
 		t.Run(string(mode), func(t *testing.T) {
 			ts, _ := newSingleSkillTestServer(t, "personal-1", "hello-skill", 1, Content{Description: "a skill", Body: "Hello.\n"}, false)
 			cmd := buildModeCmd(t, ts, "", mode)
 			cmd.logger = log.New(&bytes.Buffer{}, "", 0)
+			wrapper := filepath.Join(cmd.destDir, reservedSyncSkillsName, "SKILL.md")
+			require.NoError(t, os.MkdirAll(filepath.Dir(wrapper), 0755))
+			require.NoError(t, os.WriteFile(wrapper, []byte("old wrapper requiring a project path"), 0644))
+
+			mrw := NewManifestReadWriter(cmd.syncRoot)
+			require.NoError(t, mrw.WriteManifest(nil, syncSkillsVersion-1))
 			require.NoError(t, cmd.Run())
 
-			wrapper := filepath.Join(cmd.userHomeDir, "."+string(mode), "skills", reservedSyncSkillsName)
-			_, err := os.Lstat(wrapper)
-			require.ErrorIs(t, err, fs.ErrNotExist)
-			require.NoError(t, junction.Create(filepath.Join(cmd.destDir, reservedSyncSkillsName), wrapper))
+			linked := filepath.Join(cmd.userHomeDir, "."+string(mode), "skills", reservedSyncSkillsName, "SKILL.md")
+			content, err := os.ReadFile(linked)
+			require.NoError(t, err)
+			assert.Equal(t, wrapperContentForMode(mode), content)
 
-			require.NoError(t, cmd.Run())
-
-			_, err = os.Lstat(wrapper)
-			assert.ErrorIs(t, err, fs.ErrNotExist, "a wrapper link created by the previous version should be retired")
-			assert.FileExists(t, filepath.Join(cmd.destDir, reservedSyncSkillsName, "SKILL.md"))
+			manifest, err := mrw.ReadManifest()
+			require.NoError(t, err)
+			assert.Equal(t, syncSkillsVersion, manifest.SyncSkillsVersion)
 		})
 	}
 }
@@ -682,9 +713,8 @@ func TestSyncCommandRunPersonalScopeContentFailure(t *testing.T) {
 
 	entry := filepath.Join(cmd.userHomeDir, ".codex", "skills")
 	assert.FileExists(t, filepath.Join(cmd.destDir, reservedSyncSkillsName, "SKILL.md"))
-	_, err := os.Lstat(filepath.Join(entry, reservedSyncSkillsName))
-	assert.ErrorIs(t, err, fs.ErrNotExist)
-	_, err = os.Lstat(filepath.Join(entry, "broken"))
+	assert.FileExists(t, filepath.Join(entry, reservedSyncSkillsName, "SKILL.md"))
+	_, err := os.Lstat(filepath.Join(entry, "broken"))
 	assert.ErrorIs(t, err, fs.ErrNotExist)
 
 	row := findSummaryRow(t, parseMarkdownSummaryRows(t, output.String()), "broken", statusFailed)
@@ -2115,7 +2145,7 @@ func TestSyncCommandRunPersonalScopeRepairsDanglingCollision(t *testing.T) {
 			require.NoError(t, cmd.Run(), "owned dangling links should be repaired in a single sync without override")
 			assert.FileExists(t, filepath.Join(link, "SKILL.md"))
 			rows := parseMarkdownSummaryRows(t, output.String())
-			require.Len(t, rows, 1, "the summary should show the final link result, not an extra removal")
+			require.Len(t, rows, 2, "the summary should show the skill and wrapper, not an extra removal")
 			assert.Equal(t, linkStatusLinked, findSummaryRow(t, rows, "hello-skill", statusUnchanged)[5])
 			assert.NotContains(t, output.String(), "[y/N]", "owned dangling cleanup must not prompt")
 			assert.NotContains(t, output.String(), "left untouched")
@@ -2160,7 +2190,7 @@ func TestSyncCommandRunPersonalScopeRetriesFailedDirectoryReplacement(t *testing
 
 			entries, err := os.ReadDir(entry)
 			require.NoError(t, err)
-			require.Len(t, entries, 1)
+			require.Len(t, entries, 2, "only the original conflict and wrapper link should remain")
 			require.Equal(t, "hello-skill", entries[0].Name(), "failed replacement must remain at its original path for retry")
 			require.NoError(t, os.Chmod(conflict, 0700))
 
@@ -2169,7 +2199,7 @@ func TestSyncCommandRunPersonalScopeRetriesFailedDirectoryReplacement(t *testing
 
 			entries, err = os.ReadDir(entry)
 			require.NoError(t, err)
-			require.Len(t, entries, 1, "retry must leave no trash in the shared skills directory")
+			require.Len(t, entries, 2, "retry must leave only the skill and wrapper links, with no trash")
 
 			_, err = os.Readlink(conflict)
 			require.NoError(t, err)

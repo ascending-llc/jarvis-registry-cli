@@ -479,9 +479,11 @@ func (c *SyncCommand) Run() (err error) {
 	)
 
 	if c.personalScope {
-		names := make([]string, len(succeeded))
-		for i, m := range succeeded {
-			names[i] = m.Name
+		names := make([]string, 0, len(succeeded)+1)
+
+		names = append(names, reservedSyncSkillsName)
+		for _, m := range succeeded {
+			names = append(names, m.Name)
 		}
 
 		// A desired name may point at a different, now-deleted owned skill.
@@ -490,7 +492,7 @@ func (c *SyncCommand) Run() (err error) {
 		pruned, pruneErr := c.pruneDanglingLinks()
 		reconciled, reconcileErr := c.reconcileSymlinks(names)
 		linkOutcomes = slices.Concat(pruned, reconciled)
-		linkErr = errors.Join(reconcileErr, pruneErr, c.removeLegacyWrapperLink(), joinLinkErrors(linkOutcomes))
+		linkErr = errors.Join(reconcileErr, pruneErr, joinLinkErrors(linkOutcomes))
 	}
 
 	c.printSummary(firstTime, toCreate, createOutcomes, toUpdate, updateOutcomes, toDelete, skippedSkills, linkOutcomes)
@@ -1032,7 +1034,7 @@ func (c *SyncCommand) buildSummaryRows(toCreate []SyncSpec, createOutcomes []Syn
 }
 
 // renderSummaryRows joins link results onto matching content rows and adds
-// rows for dangling-link cleanup names without a corresponding removal.
+// rows for the built-in wrapper and dangling-link cleanup without a content row.
 func (c *SyncCommand) renderSummaryRows(content []summaryRow, links []linkOutcome) [][]string {
 	byName := make(map[string]linkOutcome, len(links))
 	for _, link := range links {
@@ -1050,7 +1052,12 @@ func (c *SyncCommand) renderSummaryRows(content []summaryRow, links []linkOutcom
 	if c.personalScope {
 		for name := range byName {
 			if !represented[name] {
-				extra = append(extra, summaryRow{Skill: name, Status: "-", Previous: "-", Current: "-", Notes: "dangling link cleanup"})
+				note := "dangling link cleanup"
+				if name == reservedSyncSkillsName {
+					note = "built-in sync-skills wrapper"
+				}
+
+				extra = append(extra, summaryRow{Skill: name, Status: "-", Previous: "-", Current: "-", Notes: note})
 			}
 		}
 	}
