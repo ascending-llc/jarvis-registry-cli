@@ -23,11 +23,19 @@ jarvis-registry configure
 jarvis-registry auth login
 ```
 
-`configure` sets the Registry base URL and default integration mode (`claude`, `codex`, or
-`copilot`). Optional settings let you override the authentication URL for local development, skip
-specific Registry skill IDs, and control whether personal Codex or GitHub Copilot link conflicts are
-replaced. See the [configuration reference](docs/getting-started.md#configuration-reference) for all
-fields and how they are managed.
+`configure` sets:
+
+- The Registry base URL.
+- The default integration mode: `claude`, `codex`, or `copilot`.
+
+Optional settings let you:
+
+- Override the authentication URL for local development.
+- Skip specific Registry skill IDs.
+- Replace personal Codex or GitHub Copilot link conflicts.
+
+See the [configuration reference](docs/getting-started.md#configuration-reference) for all fields and
+how they are managed.
 
 Then choose your integration:
 
