@@ -1,13 +1,13 @@
 ---
 name: sync-skills
-description: Sync the latest Jarvis Registry skills into Codex from your Jarvis Registry account.
+description: Sync the latest Jarvis Registry skills into Codex from the user's Jarvis Registry account.
 ---
 
 ## Arguments
 
 | Variable | Description |
 |----------|----------------|
-| `$path` | Optional project directory (absolute, relative, or "."/"this directory"/"current directory") to sync skills into. Omit if the user didn't specify one — omitting it syncs into your personal, cross-project skill set instead, and nothing is written under any project directory. |
+| `$path` | Optional project directory (absolute, relative, or "."/"this directory"/"current directory") to sync skills into. Omit if the user didn't specify one — omitting it syncs into the user's personal, cross-project skill set instead, and nothing is written under any project directory. |
 
 If the user specified a project directory, run `jarvis-registry skills sync --mode codex $path`,
 substituting `$path` verbatim (not the literal text `$path`). Otherwise, run

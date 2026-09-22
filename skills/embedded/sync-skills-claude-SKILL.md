@@ -1,6 +1,6 @@
 ---
 name: sync-skills
-description: Sync the latest Jarvis Registry skills into Claude Code from your Jarvis Registry account.
+description: Sync the latest Jarvis Registry skills into Claude Code from the user's Jarvis Registry account.
 disable-model-invocation: true
 argument-hint: "[path]"
 arguments: [path]

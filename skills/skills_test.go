@@ -547,7 +547,7 @@ func TestSyncCommandRunPersonalScopeWrapperCollision(t *testing.T) {
 	}
 }
 
-func TestSyncCommandRunPersonalScopeUpgradesVersionSevenWrapper(t *testing.T) {
+func TestSyncCommandRunPersonalScopeUpgradesStaleWrapper(t *testing.T) {
 	for _, mode := range []cfg.SkillsMode{cfg.SkillsModeCodex, cfg.SkillsModeCopilot} {
 		t.Run(string(mode), func(t *testing.T) {
 			ts, _ := newSingleSkillTestServer(t, "personal-1", "hello-skill", 1, Content{Description: "a skill", Body: "Hello.\n"}, false)
@@ -558,7 +558,7 @@ func TestSyncCommandRunPersonalScopeUpgradesVersionSevenWrapper(t *testing.T) {
 			require.NoError(t, os.WriteFile(wrapper, []byte("old wrapper requiring a project path"), 0644))
 
 			mrw := NewManifestReadWriter(cmd.syncRoot)
-			require.NoError(t, mrw.WriteManifest(nil, 7))
+			require.NoError(t, mrw.WriteManifest(nil, syncSkillsVersion-1))
 			require.NoError(t, cmd.Run())
 
 			linked := filepath.Join(cmd.userHomeDir, "."+string(mode), "skills", reservedSyncSkillsName, "SKILL.md")
@@ -568,7 +568,7 @@ func TestSyncCommandRunPersonalScopeUpgradesVersionSevenWrapper(t *testing.T) {
 
 			manifest, err := mrw.ReadManifest()
 			require.NoError(t, err)
-			assert.Equal(t, 8, manifest.SyncSkillsVersion)
+			assert.Equal(t, syncSkillsVersion, manifest.SyncSkillsVersion)
 		})
 	}
 }
