@@ -41,7 +41,7 @@ brews:
       name: homebrew-jarvis
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
-    homepage: "https://github.com/ascending-llc/jarvis-registry-cli"
+    homepage: "https://jarvisregistry.com/"
     description: "Companion CLI for the Jarvis Registry platform."
     license: "Apache-2.0"
     extra_install: |
@@ -72,7 +72,7 @@ winget:
     package_identifier: Ascending.JarvisRegistryCLI
     short_description: "Companion CLI for the Jarvis Registry platform."
     license: "Apache-2.0"
-    homepage: "https://github.com/ascending-llc/jarvis-registry-cli"
+    homepage: "https://jarvisregistry.com/"
     skip_upload: auto
     commit_author:
       name: "ryo"
