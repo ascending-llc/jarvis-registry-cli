@@ -48,7 +48,8 @@ curl -fsSL https://raw.githubusercontent.com/ascending-llc/jarvis-registry-cli/m
   BINDIR="$HOME/bin" JARVIS_REGISTRY_VERSION=v0.6.6 bash
 ```
 
-Replace the example version with the release you want. Setting `JARVIS_REGISTRY_VERSION` skips the
+Replace the example version with the release you want. The installer supports v0.6.4 and later;
+install older releases manually from the releases page. Setting `JARVIS_REGISTRY_VERSION` skips the
 GitHub latest-release API lookup, so it also works around failures at that step, such as API rate
 limiting. It still requires access to the installer URL and GitHub release downloads.
 

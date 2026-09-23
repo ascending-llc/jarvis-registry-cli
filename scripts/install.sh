@@ -49,97 +49,101 @@ verify_archive() {
     fi
 }
 
-case "$(uname -s)" in
-    Linux) ;;
-    Darwin) fail "on macOS, install with Homebrew: brew install ascending-llc/jarvis/jarvis-registry" ;;
-    *) fail "unsupported operating system; this installer supports Linux only" ;;
-esac
+main() {
+    case "$(uname -s)" in
+        Linux) ;;
+        Darwin) fail "on macOS, install with Homebrew: brew install ascending-llc/jarvis/jarvis-registry" ;;
+        *) fail "unsupported operating system; this installer supports Linux only" ;;
+    esac
 
-case "$(uname -m)" in
-    x86_64) arch=amd64 ;;
-    aarch64|arm64) arch=arm64 ;;
-    *) fail "unsupported Linux architecture: $(uname -m)" ;;
-esac
+    case "$(uname -m)" in
+        x86_64) arch=amd64 ;;
+        aarch64|arm64) arch=arm64 ;;
+        *) fail "unsupported Linux architecture: $(uname -m)" ;;
+    esac
 
-for command in curl tar mktemp awk sed install ln mv; do
-    require_command "$command"
-done
+    for command in curl tar mktemp awk sed install ln mv; do
+        require_command "$command"
+    done
 
-workdir="$(mktemp -d)"
-staged_binary=""
-cleanup() {
-    if [[ -n "$staged_binary" ]]; then
-        rm -f -- "$staged_binary"
+    workdir="$(mktemp -d)"
+    staged_binary=""
+    cleanup() {
+        if [[ -n "$staged_binary" ]]; then
+            rm -f -- "$staged_binary"
+        fi
+        rm -rf -- "$workdir"
+    }
+    trap cleanup EXIT
+
+    tag="$(resolve_tag)"
+    version="${tag#v}"
+    archive="jarvis-registry_${version}_linux_${arch}.tar.gz"
+    release_url="$release_base/$tag"
+
+    curl -fsSL "$release_url/$archive" -o "$workdir/$archive" ||
+        fail "could not download $archive"
+    curl -fsSL "$release_url/checksums.txt" -o "$workdir/checksums.txt" ||
+        fail "could not download checksums.txt"
+    verify_archive
+
+    mkdir -p -- "$workdir/extracted"
+    tar -xzf "$workdir/$archive" -C "$workdir/extracted" ||
+        fail "could not extract $archive"
+
+    for file in jarvis-registry \
+        completions/jarvis-registry.bash \
+        completions/jarvis-registry.zsh \
+        completions/jarvis-registry.fish \
+        completions/jr.fish; do
+        [[ -f "$workdir/extracted/$file" ]] ||
+            fail "release archive is missing $file"
+    done
+
+    bindir="${BINDIR:-$HOME/.local/bin}"
+    data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+    config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+    bash_completion_dir="$data_home/bash-completion/completions"
+    zsh_completion_dir="$data_home/zsh/site-functions"
+    fish_completion_dir="$config_home/fish/completions"
+
+    [[ ! -d "$bindir/jarvis-registry" && ! -L "$bindir/jarvis-registry" ]] ||
+        fail "refusing to replace a directory or symlink at $bindir/jarvis-registry"
+    [[ ! -e "$bindir/jr" || -L "$bindir/jr" ]] ||
+        fail "refusing to replace an existing non-symlink at $bindir/jr"
+
+    mkdir -p -- "$bindir" "$bash_completion_dir" "$zsh_completion_dir" "$fish_completion_dir"
+    staged_binary="$(mktemp "$bindir/.jarvis-registry.XXXXXX")"
+    install -m 0755 "$workdir/extracted/jarvis-registry" "$staged_binary"
+    mv -f -- "$staged_binary" "$bindir/jarvis-registry"
+    staged_binary=""
+    ln -sfn -- jarvis-registry "$bindir/jr"
+
+    install -m 0644 "$workdir/extracted/completions/jarvis-registry.bash" \
+        "$bash_completion_dir/jarvis-registry"
+    ln -sfn -- jarvis-registry "$bash_completion_dir/jr"
+    install -m 0644 "$workdir/extracted/completions/jarvis-registry.zsh" \
+        "$zsh_completion_dir/_jarvis-registry"
+    install -m 0644 "$workdir/extracted/completions/jarvis-registry.fish" \
+        "$fish_completion_dir/jarvis-registry.fish"
+    install -m 0644 "$workdir/extracted/completions/jr.fish" \
+        "$fish_completion_dir/jr.fish"
+
+    case ":${PATH:-}:" in
+        *":$bindir:"*) ;;
+        *) printf 'Add %s to PATH if it is not already configured.\n' "$bindir" ;;
+    esac
+
+    printf -v quoted_zsh_dir '%q' "$zsh_completion_dir"
+    printf 'For zsh completion, add this before compinit in ~/.zshrc:\n  fpath=(%s $fpath)\nRestart your shell afterward.\n' \
+        "$quoted_zsh_dir"
+
+    if [[ ! -f /usr/share/bash-completion/bash_completion &&
+        ! -f /etc/profile.d/bash_completion.sh ]]; then
+        printf 'For bash completion, install and source your distribution'\''s bash-completion package.\n'
     fi
-    rm -rf -- "$workdir"
+
+    "$bindir/jarvis-registry" --version
 }
-trap cleanup EXIT
 
-tag="$(resolve_tag)"
-version="${tag#v}"
-archive="jarvis-registry_${version}_linux_${arch}.tar.gz"
-release_url="$release_base/$tag"
-
-curl -fsSL "$release_url/$archive" -o "$workdir/$archive" ||
-    fail "could not download $archive"
-curl -fsSL "$release_url/checksums.txt" -o "$workdir/checksums.txt" ||
-    fail "could not download checksums.txt"
-verify_archive
-
-mkdir -p -- "$workdir/extracted"
-tar -xzf "$workdir/$archive" -C "$workdir/extracted" ||
-    fail "could not extract $archive"
-
-for file in jarvis-registry \
-    completions/jarvis-registry.bash \
-    completions/jarvis-registry.zsh \
-    completions/jarvis-registry.fish \
-    completions/jr.fish; do
-    [[ -f "$workdir/extracted/$file" ]] ||
-        fail "release archive is missing $file"
-done
-
-bindir="${BINDIR:-$HOME/.local/bin}"
-data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
-config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
-bash_completion_dir="$data_home/bash-completion/completions"
-zsh_completion_dir="$data_home/zsh/site-functions"
-fish_completion_dir="$config_home/fish/completions"
-
-[[ ! -d "$bindir/jarvis-registry" && ! -L "$bindir/jarvis-registry" ]] ||
-    fail "refusing to replace a directory or symlink at $bindir/jarvis-registry"
-[[ ! -e "$bindir/jr" || -L "$bindir/jr" ]] ||
-    fail "refusing to replace an existing non-symlink at $bindir/jr"
-
-mkdir -p -- "$bindir" "$bash_completion_dir" "$zsh_completion_dir" "$fish_completion_dir"
-staged_binary="$(mktemp "$bindir/.jarvis-registry.XXXXXX")"
-install -m 0755 "$workdir/extracted/jarvis-registry" "$staged_binary"
-mv -f -- "$staged_binary" "$bindir/jarvis-registry"
-staged_binary=""
-ln -sfn -- jarvis-registry "$bindir/jr"
-
-install -m 0644 "$workdir/extracted/completions/jarvis-registry.bash" \
-    "$bash_completion_dir/jarvis-registry"
-ln -sfn -- jarvis-registry "$bash_completion_dir/jr"
-install -m 0644 "$workdir/extracted/completions/jarvis-registry.zsh" \
-    "$zsh_completion_dir/_jarvis-registry"
-install -m 0644 "$workdir/extracted/completions/jarvis-registry.fish" \
-    "$fish_completion_dir/jarvis-registry.fish"
-install -m 0644 "$workdir/extracted/completions/jr.fish" \
-    "$fish_completion_dir/jr.fish"
-
-case ":${PATH:-}:" in
-    *":$bindir:"*) ;;
-    *) printf 'Add %s to PATH if it is not already configured.\n' "$bindir" ;;
-esac
-
-printf -v quoted_zsh_dir '%q' "$zsh_completion_dir"
-printf 'For zsh completion, add this before compinit in ~/.zshrc:\n  fpath=(%s $fpath)\nRestart your shell afterward.\n' \
-    "$quoted_zsh_dir"
-
-if [[ ! -f /usr/share/bash-completion/bash_completion &&
-    ! -f /etc/profile.d/bash_completion.sh ]]; then
-    printf 'For bash completion, install and source your distribution'\''s bash-completion package.\n'
-fi
-
-"$bindir/jarvis-registry" --version
+main "$@"
