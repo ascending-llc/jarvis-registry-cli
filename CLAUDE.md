@@ -23,7 +23,11 @@ Any change to the CLI surface (new/renamed/removed subcommand or flag) has no ge
 
 ## Package layout and naming
 
-- No folders that exist purely for organization. Every top-level package owns real behavior; `internal/http` is `internal` to keep an implementation detail (a shared, tuned `http.Client`) out of the public API, not to "organize" anything.
+- No Go package folders that exist purely for organization. Every top-level Go package owns real
+  behavior; `internal/http` is `internal` to keep an implementation detail (a shared, tuned
+  `http.Client`) out of the public API, not to "organize" anything. This does not constrain non-Go
+  asset directories such as `completions/` or `scripts/`, which hold generated/distributed files
+  rather than importable code and are organized however best serves their own purpose.
 - Exported names read naturally with their package qualifier, no stutter (`skills.SyncCommand`, not `skills.SkillsSyncCommand`). Read a new name back as `pkg.TypeName` before committing to it.
 
 ## Composition and interfaces
