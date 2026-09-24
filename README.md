@@ -14,6 +14,19 @@ brew install ascending-llc/jarvis/jarvis-registry
 
 See [Setup](docs/setup.md) for Windows, Linux, Go toolchain, upgrade, and configuration instructions.
 
+## Updating
+
+For Linux and Windows installations made with an install script or a manually downloaded release:
+
+```sh
+jarvis-registry update --check
+jarvis-registry update
+```
+
+Homebrew installations use `brew upgrade jarvis-registry`; winget installations use
+`winget upgrade Ascending.JarvisRegistryCLI`. For `go install` builds, rerun the install command.
+See [Updating the CLI](docs/setup.md#updating-the-cli) for first-upgrade and shell completion details.
+
 ## Get started
 
 Configure the Registry connection and sign in:

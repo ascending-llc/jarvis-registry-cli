@@ -6,6 +6,7 @@ import (
 	"github.com/ascending-llc/jarvis-registry-cli/auth"
 	"github.com/ascending-llc/jarvis-registry-cli/cfg"
 	"github.com/ascending-llc/jarvis-registry-cli/skills"
+	"github.com/ascending-llc/jarvis-registry-cli/update"
 )
 
 var version = "dev"
@@ -17,6 +18,7 @@ func main() {
 			Show skills.ShowCommand `cmd:"" name:"show" help:"Show local skills sync settings."`
 		} `cmd:"" name:"skills" help:"Manage local skills sync."`
 		Configure cfg.ConfigureCommand `cmd:"" name:"configure" help:"Interactively configure the CLI, e.g. the Registry base URL."`
+		Update    update.Command       `cmd:"" name:"update" help:"Download and install the latest jarvis-registry release, replacing the running binary."`
 		Auth      struct {
 			Login  auth.LoginCommand  `cmd:"" name:"login" help:"Log in to the Registry."`
 			Status auth.StatusCommand `cmd:"" name:"status" help:"Show Registry authentication status."`

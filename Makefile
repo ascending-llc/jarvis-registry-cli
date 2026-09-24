@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := all
 
 CLI_OUTPUT ?= bin/jarvis-registry
+UPDATE_TEST_FLAGS ?= -race
 
 build:
 	@go build -o "$(CLI_OUTPUT)" ./cmd/jarvis-registry
@@ -9,6 +10,10 @@ build:
 test:
 	@go test -race ./...
 .PHONY: test
+
+test-update:
+	@go test $(UPDATE_TEST_FLAGS) ./update
+.PHONY: test-update
 
 test-personal-scope:
 	@go test -race ./skills -run 'Test(Symlink|PruneDanglingLinks|SyncCommandRunPersonalScope|SyncCommandPersonalScopeInteractiveValidation|ManifestReadWriterReplacesReadOnlyManifest)'

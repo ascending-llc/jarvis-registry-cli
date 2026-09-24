@@ -24,6 +24,9 @@ jobs:
         with:
           go-version: "^1.24.1"
 
+      - name: Test self-update and Windows archive replacement
+        run: go test -race ./update
+
       - name: Test junction dependency
         run: go test github.com/nyaosorg/go-windows-junction
 
