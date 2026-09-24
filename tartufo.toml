@@ -10,6 +10,11 @@ exclude-path-patterns = [
     {path-pattern = 'skills/testdata', reason = 'testdata files'},
 ]
 
+exclude-entropy-patterns = [
+    # Public SHA-256 digest of the pinned jsign release jar, used to verify the download.
+    {path-pattern = '\.github/workflows/.*\.yaml$', pattern = '602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c', reason = 'jsign 7.5 jar SHA-256 digest'},
+]
+
 exclude-signatures = [
     # {signature = "hash value", reason = "false positive of high entropy in <***>"},
 ]
