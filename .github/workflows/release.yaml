@@ -48,7 +48,9 @@ jobs:
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          # Temporary: skip winget until microsoft/winget-pkgs#439002 (first submission) merges,
+          # so releases don't open a duplicate new-package PR. Remove once it's merged.
+          args: release --clean --skip=winget
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.GH_COPILOT_KEY }}
