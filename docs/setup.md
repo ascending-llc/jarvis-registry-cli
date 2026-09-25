@@ -25,6 +25,36 @@ winget install Ascending.JarvisRegistryCLI
 
 Upgrade with `winget upgrade Ascending.JarvisRegistryCLI`.
 
+Where winget is unavailable, use the installer script instead. It supports Windows amd64 and arm64
+under Windows PowerShell 5.1 or PowerShell 7:
+
+```powershell
+irm https://raw.githubusercontent.com/ascending-llc/jarvis-registry-cli/main/scripts/install.ps1 | iex
+```
+
+Review the [installer source](../scripts/install.ps1) before running it. The installer verifies the
+download's checksum and the binary's Authenticode signature, then adds the install directory to your
+`PATH`; open a new terminal afterward. Run from a non-elevated session, it installs to
+`%LOCALAPPDATA%\Programs\jarvis-registry` and updates your user `PATH`. Run from an elevated
+session, it installs to `%ProgramFiles%\jarvis-registry` and updates the machine-wide `PATH`. Set
+`JARVIS_REGISTRY_INSTALL_DIR` to choose a different directory, or `JARVIS_REGISTRY_VERSION` to
+install a particular release:
+
+```powershell
+$env:JARVIS_REGISTRY_VERSION = 'v0.6.7'
+irm https://raw.githubusercontent.com/ascending-llc/jarvis-registry-cli/main/scripts/install.ps1 | iex
+```
+
+The installer supports v0.6.7 and later, the first signed releases; install older releases manually
+from the releases page. Re-running the command upgrades an existing installation in place.
+
+The binary is signed, but Windows may still show a SmartScreen "Windows protected your PC" prompt on
+first run for the first handful of installations across an organization, tapering off as the
+binary builds reputation. This is expected and does not indicate a problem with the signature.
+
+You can also install an archive manually from the
+[releases page](https://github.com/ascending-llc/jarvis-registry-cli/releases).
+
 ## Linux
 
 The installer supports Linux amd64 (x86_64) and arm64 (aarch64). The default per-user installation
