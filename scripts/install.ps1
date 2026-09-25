@@ -257,10 +257,22 @@ public static extern IntPtr SendMessageTimeout(
         }
         Assert-Signature $stagedExe
 
-        # Re-expanding the checksum-verified archive yields the same verified binary. The archive's
+        # Install the verified staged copy rather than re-expanding the archive. The archive's
         # completions\ folder comes along unregistered: PowerShell/CMD completion is out of scope.
         New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-        Expand-Archive -LiteralPath $archivePath -DestinationPath $installDir -Force
+        Copy-Item -Path (Join-Path $stagingDir '*') -Destination $installDir -Recurse -Force
+
+        # The staging directory sits under %TEMP%, which the invoking user's non-elevated processes
+        # can write to, so the staged exe could be swapped between its check and the copy. Check it
+        # again in the install directory, which only administrators can write to on an elevated
+        # install, before it is put on PATH or run, and remove it if it fails.
+        $installedExe = Join-Path $installDir 'jarvis-registry.exe'
+        try {
+            Assert-Signature $installedExe
+        } catch {
+            Remove-Item -LiteralPath $installedExe -Force -ErrorAction SilentlyContinue
+            throw
+        }
     } finally {
         Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
     }
