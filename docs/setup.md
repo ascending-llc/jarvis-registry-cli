@@ -46,7 +46,9 @@ irm https://raw.githubusercontent.com/ascending-llc/jarvis-registry-cli/main/scr
 ```
 
 The installer supports v0.6.7 and later, the first signed releases; install older releases manually
-from the releases page. Re-running the command upgrades an existing installation in place.
+from the releases page. Re-running the command upgrades an existing installation in place. The
+installer can't run where AppLocker or WDAC enforces script rules, which puts PowerShell in
+Constrained Language mode; use winget or the releases page there.
 
 The binary is signed, but Windows may still show a SmartScreen "Windows protected your PC" prompt on
 first run for the first handful of installations across an organization, tapering off as the

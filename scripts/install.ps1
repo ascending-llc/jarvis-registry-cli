@@ -198,6 +198,17 @@ public static extern IntPtr SendMessageTimeout(
         Write-Host 'Open a new terminal to use jarvis-registry from PATH.'
     }
 
+    # AppLocker or WDAC script enforcement runs `irm | iex` in ConstrainedLanguage mode, which blocks
+    # Add-Type and most .NET calls this script makes. Check first so the user gets an actionable
+    # message instead of whichever "not permitted in this language mode" error happens to hit first.
+    $languageMode = $ExecutionContext.SessionState.LanguageMode
+    if ($languageMode -ne 'FullLanguage') {
+        Fail ("PowerShell is running in $languageMode mode, usually because AppLocker or WDAC" +
+            ' enforces script rules on this machine, and this installer needs FullLanguage mode.' +
+            ' Install with winget or manually from' +
+            ' https://github.com/ascending-llc/jarvis-registry-cli/releases instead.')
+    }
+
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
         Fail 'this installer supports Windows only; see docs/setup.md for macOS and Linux'
     }
