@@ -45,6 +45,10 @@ $env:JARVIS_REGISTRY_VERSION = 'v0.6.7'
 irm https://raw.githubusercontent.com/ascending-llc/jarvis-registry-cli/main/scripts/install.ps1 | iex
 ```
 
+When deploying across many machines, set `JARVIS_REGISTRY_VERSION` in the deployment script or in
+the command you hand out. Without it, each run asks GitHub's API for the latest release, and GitHub
+allows only 60 such requests per hour from one network address.
+
 The installer supports v0.6.7 and later, the first signed releases; install older releases manually
 from the releases page. Re-running the command upgrades an existing installation in place. The
 installer can't run where AppLocker or WDAC enforces script rules, which puts PowerShell in

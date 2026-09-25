@@ -55,7 +55,11 @@
             try {
                 $tag = [string] (Invoke-RestMethod -Uri $ReleaseApi -UseBasicParsing).tag_name
             } catch {
-                Fail "could not resolve the latest GitHub release: $($_.Exception.Message)"
+                # GitHub allows 60 unauthenticated API requests per hour per public IP, which a
+                # shared office network can exhaust; a pinned version skips this request entirely.
+                Fail ("could not resolve the latest GitHub release: $($_.Exception.Message.TrimEnd('.'))." +
+                    " If GitHub's API rate limit for your network is exhausted, retry later, or set" +
+                    ' $env:JARVIS_REGISTRY_VERSION to a release tag (for example v0.6.7) and re-run.')
             }
         }
 
