@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   goreleaser:
@@ -22,12 +23,34 @@ jobs:
         with:
           go-version: "^1.24.1"
 
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Get Artifact Signing access token
+        run: |
+          token="$(az account get-access-token --resource https://codesigning.azure.net --query accessToken -o tsv)"
+          echo "::add-mask::$token"
+          echo "AZURE_CODESIGNING_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Install jsign
+        run: |
+          jar="$RUNNER_TEMP/jsign-7.5.jar"
+          curl -fsSL -o "$jar" https://github.com/ebourg/jsign/releases/download/7.5/jsign-7.5.jar
+          echo "602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c  $jar" | sha256sum -c -
+          echo "JSIGN_JAR=$jar" >> "$GITHUB_ENV"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          # Temporary: skip winget until microsoft/winget-pkgs#439002 (first submission) merges,
+          # so releases don't open a duplicate new-package PR. Remove once it's merged.
+          args: release --clean --skip=winget
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.GH_COPILOT_KEY }}
