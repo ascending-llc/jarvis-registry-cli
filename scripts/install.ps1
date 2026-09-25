@@ -229,7 +229,10 @@ public static extern IntPtr SendMessageTimeout(
         [Security.Principal.WindowsBuiltInRole]::Administrator)
 
     if ($env:JARVIS_REGISTRY_INSTALL_DIR) {
-        $installDir = [IO.Path]::GetFullPath($env:JARVIS_REGISTRY_INSTALL_DIR)
+        # Resolve a relative path against the current PowerShell location: .NET's own current
+        # directory, which GetFullPath alone would use, doesn't follow Set-Location.
+        $installDir = [IO.Path]::GetFullPath(
+            $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($env:JARVIS_REGISTRY_INSTALL_DIR))
     } elseif ($isElevated) {
         # In a 32-bit host, ProgramFiles is "Program Files (x86)"; ProgramW6432 is the native one.
         $programFiles = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
