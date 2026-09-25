@@ -211,6 +211,30 @@ linters:
         # directories are created only inside t.TempDir() and intentionally mirror the production config directory permissions
         text: 'G301: Expect directory permissions to be 0750 or less'
 
+      - path: '^update/(update|lock)_test\.go$'
+        linters:
+          - gosec
+        # Reads fixed fixtures, the current test executable, and executable/symlink copies created under t.TempDir().
+        text: 'G304: Potential file inclusion via variable'
+
+      - path: '^update/(update|lock)_test\.go$'
+        linters:
+          - gosec
+        # Executes only the current test executable or its temporary copy, with a fixed test selector.
+        text: 'G204: Subprocess launched with variable'
+
+      - path: '^update/(update|lock)_test\.go$'
+        linters:
+          - gosec
+        # The temporary copy of this test executable needs owner execute permission (0700) for the child-process test.
+        text: 'G306: Expect WriteFile permissions to be 0600 or less'
+
+      - path: '^update/(update|lock)_test\.go$'
+        linters:
+          - gosec
+        # The destination is a fixed basename inside t.TempDir(); the copied executable bytes cannot select a path.
+        text: 'G703: Path traversal via taint analysis'
+
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0

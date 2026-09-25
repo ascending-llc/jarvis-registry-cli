@@ -1,6 +1,6 @@
 # Contributing
 
-Install the repository's pre-commit hook before making changes:
+Use Go 1.24.11 or later. Install the repository's pre-commit hook before making changes:
 
 ```sh
 pre-commit install -t pre-commit

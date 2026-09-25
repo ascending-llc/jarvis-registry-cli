@@ -34,8 +34,8 @@ does not require `sudo`. Install the latest release, the `jr` shorthand, and she
 curl -fsSL https://raw.githubusercontent.com/ascending-llc/jarvis-registry-cli/main/scripts/install.sh | bash
 ```
 
-Review the [installer source](../scripts/install.sh) before running it. Re-running the command upgrades
-an existing installation. The default binary directory is `~/.local/bin`; the installer prints any
+Review the [installer source](../scripts/install.sh) before running it. See [Updating the CLI](#updating-the-cli)
+for upgrades. The default binary directory is `~/.local/bin`; the installer prints any
 needed `PATH` and zsh completion setup instructions without changing your shell configuration.
 Bash completion requires `bash-completion` v2 to be installed and sourced by your shell. Completion
 paths honor `XDG_DATA_HOME` (bash/zsh) and `XDG_CONFIG_HOME` (fish); some versions of `bash-completion`
@@ -65,6 +65,55 @@ go install github.com/ascending-llc/jarvis-registry-cli/cmd/jarvis-registry@late
 ```
 
 A CLI installed this way always reports `dev` for `jarvis-registry --version`.
+
+## Updating the CLI
+
+For Linux and Windows installations made with an install script or a manually downloaded release:
+
+```sh
+jarvis-registry update --check  # Report an available version without changing the executable.
+jarvis-registry update          # Download, verify, and install a newer release.
+jarvis-registry --version
+```
+
+The command checks releases in `ascending-llc/jarvis-registry-cli` directly on GitHub; Registry
+configuration and login are not required. It selects a release for your operating system and
+architecture, verifies the download against the release's SHA-256 `checksums.txt`, and replaces
+the resolved executable. The `jr` symlink continues to work. A checksum failure leaves the
+installed executable untouched. On Windows, self-update does not verify Authenticode signatures.
+
+If the current version is already the latest, the command reports that and exits successfully.
+It also refuses to downgrade a newer local version. `--check` exits successfully when a newer
+version is available and does not download the archive or change the executable. Network,
+validation, and installation failures exit with an error. The executable's directory must be
+writable; for an administrator-installed copy, use an appropriately privileged terminal.
+
+Only one self-update can install into a given executable path at a time. Another attempt
+reports that an update is already in progress; wait for it to finish before retrying. `--check`
+does not acquire this lock. The small `.jarvis-registry.update.lock` file (or
+`.jarvis-registry.exe.update.lock` on Windows) stays beside the executable; its presence does
+not mean an update is running. The operating system releases the lock even if the updating
+process crashes. Do not delete the lock file while an update is running.
+
+Use the upgrade method matching your installation:
+
+- **Homebrew:** `brew upgrade jarvis-registry`. Self-update, including `--check`, refuses to run
+  on a Homebrew-managed executable.
+- **winget:** `winget upgrade Ascending.JarvisRegistryCLI`. Continue using winget to manage
+  these installations; the self-update command does not detect winget ownership.
+- **Go toolchain:** rerun `go install github.com/ascending-llc/jarvis-registry-cli/cmd/jarvis-registry@latest`.
+  These builds report `dev`, so both self-update and `--check` refuse to run.
+
+**First upgrade:** a version released before `update` was introduced cannot run this command.
+Use your original installer or download a current release once; subsequent upgrades can use
+`jarvis-registry update`.
+
+**Shell completions:** self-update replaces only the executable. To refresh completion files
+previously copied into your shell's configuration directories, rerun the Linux installer or
+copy the completion files from the new release archive, then restart your shell.
+
+GitHub access is required. If GitHub reports a rate limit, wait before checking again; avoid
+running `--check` frequently in shell startup scripts or scheduled jobs.
 
 ## Configure the CLI
 

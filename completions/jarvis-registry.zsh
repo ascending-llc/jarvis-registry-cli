@@ -21,6 +21,12 @@ _jarvis-registry_configure() {
         '(-h --help)'{-h,--help}'[Show context-sensitive help.]'
 }
 
+_jarvis-registry_update() {
+    _arguments \
+        '(-h --help)'{-h,--help}'[Show context-sensitive help.]' \
+        '--check[Report whether a newer version is available, without installing it.]'
+}
+
 _jarvis-registry_skills_sync() {
     _arguments \
         '(-h --help)'{-h,--help}'[Show context-sensitive help.]' \
@@ -63,6 +69,7 @@ _jarvis-registry() {
         'auth:Manage Registry authentication.'
         'configure:Interactively configure the CLI, e.g. the Registry base URL.'
         'skills:Manage local skills sync.'
+        'update:Download and install the latest release.'
     )
 
     _arguments -C \
@@ -81,6 +88,7 @@ _jarvis-registry() {
                 auth) _jarvis-registry_auth ;;
                 configure) _jarvis-registry_configure ;;
                 skills) _jarvis-registry_skills ;;
+                update) _jarvis-registry_update ;;
             esac
             ;;
     esac
