@@ -38,11 +38,13 @@
     }
 
     function Resolve-Arch {
-        # Known limitation: an x86 PowerShell host emulated on ARM64 Windows reports x86 here.
-        switch ($env:PROCESSOR_ARCHITECTURE) {
+        # A 32-bit (WOW64) host, such as the one Intune runs scripts in by default, reports x86 in
+        # PROCESSOR_ARCHITECTURE and the OS's native architecture in PROCESSOR_ARCHITEW6432.
+        $nativeArch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+        switch ($nativeArch) {
             'AMD64' { return 'amd64' }
             'ARM64' { return 'arm64' }
-            default { Fail "unsupported Windows architecture: $env:PROCESSOR_ARCHITECTURE" }
+            default { Fail "unsupported Windows architecture: $nativeArch" }
         }
     }
 
@@ -225,7 +227,9 @@ public static extern IntPtr SendMessageTimeout(
     if ($env:JARVIS_REGISTRY_INSTALL_DIR) {
         $installDir = [IO.Path]::GetFullPath($env:JARVIS_REGISTRY_INSTALL_DIR)
     } elseif ($isElevated) {
-        $installDir = Join-Path $env:ProgramFiles 'jarvis-registry'
+        # In a 32-bit host, ProgramFiles is "Program Files (x86)"; ProgramW6432 is the native one.
+        $programFiles = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
+        $installDir = Join-Path $programFiles 'jarvis-registry'
     } else {
         $installDir = Join-Path $env:LOCALAPPDATA 'Programs\jarvis-registry'
     }
