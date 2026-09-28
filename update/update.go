@@ -3,7 +3,9 @@ package update
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,6 +14,8 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/alecthomas/kong"
 	"github.com/creativeprojects/go-selfupdate"
+
+	"github.com/ascending-llc/jarvis-registry-cli/cfg"
 )
 
 type (
@@ -43,15 +47,24 @@ type (
 		executablePathFunc func() (string, error)
 		updater            Updater
 		currentVersion     string
+		registryDir        string
 	}
 )
 
-// BeforeReset initializes logging, executable resolution, and the GitHub updater.
+// BeforeReset initializes logging, executable resolution, the state directory,
+// and the GitHub updater without loading Registry configuration.
 // Constructing the updater does not make network requests.
 func (c *Command) BeforeReset() error {
 	c.logger = log.New(os.Stdout, "", 0)
 	c.stderrLogger = log.New(os.Stderr, "", 0)
 	c.executablePathFunc = selfupdate.ExecutablePath
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("could not locate user home directory: %s", err.Error())
+	}
+
+	c.registryDir = filepath.Join(home, cfg.RegistryDirName)
 
 	source, err := selfupdate.NewGitHubSource(selfupdate.GitHubConfig{})
 	if err != nil {
@@ -74,7 +87,7 @@ func (c *Command) AfterApply(vars kong.Vars) error {
 }
 
 // Run checks for a newer release and optionally installs it at the resolved
-// executable path. Development and Homebrew installs are rejected before I/O
+// executable path. Development, Homebrew, and winget installs are rejected before I/O
 // against GitHub, and newer local versions are never downgraded.
 func (c *Command) Run() error {
 	if c.currentVersion == "dev" {
@@ -93,6 +106,10 @@ func (c *Command) Run() error {
 
 	if isHomebrewPath(exe) {
 		return fmt.Errorf("this executable is managed by Homebrew; run brew upgrade jarvis-registry")
+	}
+
+	if isWingetPath(exe) {
+		return fmt.Errorf("this executable is managed by winget; run winget upgrade Ascending.JarvisRegistryCLI")
 	}
 
 	ctx := context.Background()
@@ -128,7 +145,7 @@ func (c *Command) Run() error {
 }
 
 func (c *Command) installRelease(ctx context.Context, release *selfupdate.Release, exe string) error {
-	lock, err := acquireUpdateLock(exe)
+	lock, err := acquireUpdateLock(c.registryDir, exe)
 	if err != nil {
 		return err
 	}
@@ -140,7 +157,11 @@ func (c *Command) installRelease(ctx context.Context, release *selfupdate.Releas
 	}()
 
 	if err := c.updater.UpdateTo(ctx, release, exe); err != nil {
-		return fmt.Errorf("could not update %q (check write permissions if access was denied): %s", exe, err.Error())
+		if errors.Is(err, fs.ErrPermission) {
+			return fmt.Errorf("could not update %q (check write permissions on its directory): %s", exe, err.Error())
+		}
+
+		return fmt.Errorf("could not update %q: %s", exe, err.Error())
 	}
 
 	c.logger.Printf("Updated jarvis-registry to %s.\n", release.Version())
@@ -159,4 +180,10 @@ func isHomebrewPath(exe string) bool {
 	exe = strings.ToLower(filepath.ToSlash(exe))
 
 	return strings.Contains(exe, "/cellar/") || strings.Contains(exe, "/homebrew/") || strings.Contains(exe, "/linuxbrew/")
+}
+
+func isWingetPath(exe string) bool {
+	exe = strings.ToLower(filepath.ToSlash(exe))
+
+	return strings.Contains(exe, "/winget/packages/")
 }

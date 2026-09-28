@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -25,6 +26,8 @@ import (
 	"github.com/google/go-github/v74/github"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ascending-llc/jarvis-registry-cli/cfg"
 )
 
 type (
@@ -100,6 +103,7 @@ func TestCommandRunVerifiedUpdate(t *testing.T) {
 			err = cmd.Run()
 			if tc.wantError != "" {
 				require.ErrorContains(t, err, tc.wantError)
+				assert.NotContains(t, err.Error(), "check write permissions")
 				assert.Empty(t, out.String(), "failures must not report success")
 			} else {
 				require.NoError(t, err)
@@ -122,9 +126,12 @@ func TestCommandRunVerifiedUpdate(t *testing.T) {
 			if tc.check {
 				assert.Empty(t, source.downloads, "--check must not download either asset")
 
-				_, err := os.Stat(filepath.Join(filepath.Dir(exe), "."+filepath.Base(exe)+".update.lock"))
-				require.ErrorIs(t, err, os.ErrNotExist, "--check must not create a lock file")
+				_, statErr := os.Stat(filepath.Join(cmd.registryDir, "locks"))
+				require.ErrorIs(t, statErr, os.ErrNotExist, "--check must not create lock state")
 			}
+
+			_, err = os.Stat(filepath.Join(filepath.Dir(exe), "."+filepath.Base(exe)+".update.lock"))
+			require.ErrorIs(t, err, os.ErrNotExist, "updates must not leave lock files beside the executable")
 		})
 	}
 }
@@ -132,16 +139,17 @@ func TestCommandRunVerifiedUpdate(t *testing.T) {
 func TestCommandRun(t *testing.T) {
 	_, _, release := newReleaseFixture(t)
 	cases := []struct {
-		detectErr   error
-		updateErr   error
-		name        string
-		version     string
-		wantOutput  string
-		wantError   string
-		wantUpdates int
-		check       bool
-		notFound    bool
-		nilRelease  bool
+		detectErr          error
+		updateErr          error
+		name               string
+		version            string
+		wantOutput         string
+		wantError          string
+		wantUpdates        int
+		wantPermissionHint bool
+		check              bool
+		notFound           bool
+		nilRelease         bool
 	}{
 		{name: "already latest", version: "1.2.3", wantOutput: "already up to date"},
 		{name: "already latest check", version: "1.2.3", check: true, wantOutput: "already up to date"},
@@ -155,7 +163,9 @@ func TestCommandRun(t *testing.T) {
 		{name: "nil release", version: "1.0.0", nilRelease: true, wantError: "no compatible CLI release"},
 		{name: "GitHub rate limit", version: "1.0.0", detectErr: errors.New("API rate limit exceeded"), wantError: "API rate limit exceeded"},
 		{name: "network error", version: "1.0.0", detectErr: errors.New("network unreachable"), wantError: "could not check for a CLI release"},
-		{name: "update fails", version: "1.0.0", updateErr: errors.New("permission denied"), wantError: "check write permissions", wantUpdates: 1},
+		{name: "permission error", version: "1.0.0", updateErr: fmt.Errorf("replace: %w", &fs.PathError{Op: "rename", Path: "jarvis-registry", Err: fs.ErrPermission}), wantError: "check write permissions", wantUpdates: 1, wantPermissionHint: true},
+		{name: "checksum mismatch", version: "1.0.0", updateErr: errors.New("failed validating asset content: checksum mismatch"), wantError: "checksum mismatch", wantUpdates: 1},
+		{name: "asset download failure", version: "1.0.0", updateErr: errors.New("asset download failed"), wantError: "asset download failed", wantUpdates: 1},
 	}
 
 	for _, tc := range cases {
@@ -175,6 +185,7 @@ func TestCommandRun(t *testing.T) {
 			err = cmd.Run()
 			if tc.wantError != "" {
 				require.ErrorContains(t, err, tc.wantError)
+				assert.Equal(t, tc.wantPermissionHint, strings.Contains(err.Error(), "check write permissions"))
 				assert.Empty(t, out.String())
 			} else {
 				require.NoError(t, err)
@@ -183,6 +194,12 @@ func TestCommandRun(t *testing.T) {
 
 			assert.Equal(t, 1, updater.detectCalls)
 			assert.Equal(t, tc.wantUpdates, updater.updateCalls)
+
+			if tc.wantUpdates == 0 {
+				_, statErr := os.Stat(filepath.Join(cmd.registryDir, "locks"))
+				require.ErrorIs(t, statErr, os.ErrNotExist, "no-op commands must not create lock state")
+			}
+
 			owner, repo, err := updater.repository.GetSlug()
 			require.NoError(t, err)
 			assert.Equal(t, "ascending-llc", owner)
@@ -212,6 +229,9 @@ func TestCommandRunGuards(t *testing.T) {
 		{name: "Intel Cellar", version: "1.0.0", path: "/usr/local/Cellar/jarvis-registry/1.0.0/bin/jarvis-registry", wantError: "brew upgrade jarvis-registry"},
 		{name: "Linuxbrew", version: "1.0.0", path: "/home/linuxbrew/.linuxbrew/bin/jarvis-registry", wantError: "brew upgrade jarvis-registry"},
 		{name: "case insensitive", version: "1.0.0", path: "/OPT/HOMEBREW/bin/jarvis-registry", wantError: "brew upgrade jarvis-registry"},
+		{name: "winget user scope", version: "1.0.0", path: filepath.FromSlash("C:/Users/test/AppData/Local/Microsoft/WinGet/Packages/Ascending.JarvisRegistryCLI_abc/jarvis-registry.exe"), wantError: "winget upgrade Ascending.JarvisRegistryCLI"},
+		{name: "winget machine scope", version: "1.0.0", path: filepath.FromSlash("C:/Program Files/WinGet/Packages/Ascending.JarvisRegistryCLI_abc/jarvis-registry.exe"), wantError: "winget upgrade Ascending.JarvisRegistryCLI"},
+		{name: "winget case insensitive", version: "1.0.0", path: filepath.FromSlash("C:/PROGRAM FILES/WINGET/PACKAGES/Ascending.JarvisRegistryCLI_abc/jarvis-registry.exe"), wantError: "winget upgrade Ascending.JarvisRegistryCLI"},
 	}
 
 	for _, tc := range cases {
@@ -232,12 +252,19 @@ func TestCommandRunGuards(t *testing.T) {
 				assert.Zero(t, updater.detectCalls, "guards must run before any network request")
 				assert.Zero(t, updater.updateCalls)
 				assert.Empty(t, out.String())
+
+				_, err = os.Stat(filepath.Join(cmd.registryDir, "locks"))
+				require.ErrorIs(t, err, os.ErrNotExist)
 			})
 		}
 	}
 }
 
 func TestCommandKongLifecycle(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
 	for _, check := range []bool{false, true} {
 		t.Run(fmt.Sprintf("check=%t", check), func(t *testing.T) {
 			var cli struct {
@@ -256,6 +283,7 @@ func TestCommandKongLifecycle(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, check, cli.Update.Check)
 			assert.Equal(t, "1.2.3", cli.Update.currentVersion)
+			assert.Equal(t, filepath.Join(home, cfg.RegistryDirName), cli.Update.registryDir)
 			assert.IsType(t, &log.Logger{}, cli.Update.logger)
 			assert.IsType(t, &log.Logger{}, cli.Update.stderrLogger)
 			assert.IsType(t, &selfupdate.Updater{}, cli.Update.updater)
@@ -273,6 +301,9 @@ func TestCommandKongLifecycle(t *testing.T) {
 			require.NoError(t, ctx.Run())
 			assert.Contains(t, out.String(), "already up to date")
 			assert.Zero(t, updater.updateCalls)
+
+			_, err = os.Stat(cli.Update.registryDir)
+			require.ErrorIs(t, err, os.ErrNotExist, "initialization must not create or load Registry state")
 		})
 	}
 }
@@ -284,6 +315,8 @@ func TestCommandAllowsUnmanagedPaths(t *testing.T) {
 		"/home/user/.local/bin/jarvis-registry",
 		"/home/user/homebrew-tools/jarvis-registry",
 		`C:\Program Files\Jarvis Registry\jarvis-registry.exe`,
+		filepath.FromSlash("C:/tools/WinGet/Packages-tools/jarvis-registry.exe"),
+		filepath.FromSlash("C:/tools/WinGet-other/Packages/jarvis-registry.exe"),
 	} {
 		t.Run(exe, func(t *testing.T) {
 			updater := &updaterStub{release: release, found: true}
@@ -458,6 +491,7 @@ func testCommand(t *testing.T, updater Updater, out *bytes.Buffer) Command {
 		stderrLogger:       log.New(out, "", 0),
 		updater:            updater,
 		currentVersion:     "1.0.0",
+		registryDir:        filepath.Join(t.TempDir(), cfg.RegistryDirName),
 		executablePathFunc: func() (string, error) { return exe, nil },
 	}
 }

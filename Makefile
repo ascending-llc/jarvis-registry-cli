@@ -12,7 +12,7 @@ test:
 .PHONY: test
 
 test-update:
-	@go test $(UPDATE_TEST_FLAGS) ./update
+	@go test $(UPDATE_TEST_FLAGS) ./update ./internal/lockfile
 .PHONY: test-update
 
 test-personal-scope:

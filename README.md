@@ -23,8 +23,9 @@ jarvis-registry update --check
 jarvis-registry update
 ```
 
-Homebrew installations use `brew upgrade jarvis-registry`; winget installations use
-`winget upgrade Ascending.JarvisRegistryCLI`. For `go install` builds, rerun the install command.
+Self-update, including `--check`, refuses Homebrew and winget installations. Use
+`brew upgrade jarvis-registry` or `winget upgrade Ascending.JarvisRegistryCLI`, respectively.
+For `go install` builds, rerun the install command.
 See [Updating the CLI](docs/setup.md#updating-the-cli) for first-upgrade and shell completion details.
 
 ## Get started

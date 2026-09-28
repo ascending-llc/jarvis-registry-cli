@@ -124,19 +124,22 @@ version is available and does not download the archive or change the executable.
 validation, and installation failures exit with an error. The executable's directory must be
 writable; for an administrator-installed copy, use an appropriately privileged terminal.
 
-Only one self-update can install into a given executable path at a time. Another attempt
-reports that an update is already in progress; wait for it to finish before retrying. `--check`
-does not acquire this lock. The small `.jarvis-registry.update.lock` file (or
-`.jarvis-registry.exe.update.lock` on Windows) stays beside the executable; its presence does
-not mean an update is running. The operating system releases the lock even if the updating
-process crashes. Do not delete the lock file while an update is running.
+Only one self-update per OS user can install into a given executable path at a time. Another
+attempt reports that an update is already in progress; wait for it to finish before retrying.
+`--check` does not acquire this lock. Self-update and skills sync share OS-level locks under
+`~/.jarvis-registry/locks/`, with names `update-<sha256>.lock` and `skills-<sha256>.lock` keyed
+by the resolved executable path and cleaned sync-root path, respectively. No Registry config
+is loaded for self-update. Lock files remain after release; their presence or age does not
+indicate a running operation. The OS releases the lock on process exit, including crashes.
+Do not delete lock files while an operation is running. Because locks are per user, different
+OS users updating a shared installation such as `/usr/local/bin` do not block each other.
 
 Use the upgrade method matching your installation:
 
 - **Homebrew:** `brew upgrade jarvis-registry`. Self-update, including `--check`, refuses to run
   on a Homebrew-managed executable.
-- **winget:** `winget upgrade Ascending.JarvisRegistryCLI`. Continue using winget to manage
-  these installations; the self-update command does not detect winget ownership.
+- **winget:** `winget upgrade Ascending.JarvisRegistryCLI`. Self-update, including `--check`,
+  refuses executables under a `WinGet/Packages` directory for user- and machine-scope installs.
 - **Go toolchain:** rerun `go install github.com/ascending-llc/jarvis-registry-cli/cmd/jarvis-registry@latest`.
   These builds report `dev`, so both self-update and `--check` refuse to run.
 
@@ -148,8 +151,13 @@ Use your original installer or download a current release once; subsequent upgra
 previously copied into your shell's configuration directories, rerun the Linux installer or
 copy the completion files from the new release archive, then restart your shell.
 
-GitHub access is required. If GitHub reports a rate limit, wait before checking again; avoid
-running `--check` frequently in shell startup scripts or scheduled jobs.
+GitHub access is required. `update` uses `GITHUB_TOKEN` from the environment when set. A valid
+token raises the API rate limit; anonymous requests normally share a 60-requests-per-hour
+budget per public IP, including other users behind the same corporate NAT or VPN and the
+Linux installer's latest-release lookup. An expired or revoked token can cause `401 Bad
+credentials`; update or unset `GITHUB_TOKEN` to resolve it. If GitHub reports a rate limit,
+wait before checking again; avoid running `--check` frequently in shell startup scripts or
+scheduled jobs.
 
 ## Configure the CLI
 

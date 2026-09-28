@@ -26,7 +26,11 @@ func TestAcquireLock(t *testing.T) {
 
 		entries, err = os.ReadDir(filepath.Join(registryDir, "locks"))
 		require.NoError(t, err, "should be able to list the locks directory after release")
-		assert.Empty(t, entries, "release should remove the lock file")
+		assert.Len(t, entries, 1, "release must keep the stable lock file")
+
+		retry, err := acquireLock(registryDir, pluginRoot)
+		require.NoError(t, err, "a released lock file must not block the next sync")
+		retry()
 	})
 
 	t.Run("a second acquireLock against the same target fails while the first is held", func(t *testing.T) {
@@ -63,61 +67,38 @@ func TestAcquireLock(t *testing.T) {
 		assert.Len(t, entries, 2, "two distinct targets should produce two distinct lock files")
 	})
 
-	t.Run("a stale lock is reclaimed rather than blocking a new acquisition", func(t *testing.T) {
+	t.Run("an old lock file is not reclaimed while its owner is still running", func(t *testing.T) {
 		registryDir := t.TempDir()
 		pluginRoot := filepath.Join(t.TempDir(), "plugin-root")
-
 		release, err := acquireLock(registryDir, pluginRoot)
-		require.NoError(t, err, "the first acquireLock should succeed")
+		require.NoError(t, err)
+		t.Cleanup(release)
 
 		entries, err := os.ReadDir(filepath.Join(registryDir, "locks"))
-		require.NoError(t, err, "should be able to list the locks directory")
-		require.Len(t, entries, 1, "the first acquireLock should create exactly one lock file")
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
 
-		staleLockPath := filepath.Join(registryDir, "locks", entries[0].Name())
-
-		staleTime := time.Now().Add(-2 * lockStaleAfter)
-		require.NoError(t, os.Chtimes(staleLockPath, staleTime, staleTime), "should be able to backdate the lock file's mtime to simulate staleness")
+		old := time.Now().Add(-time.Hour)
+		require.NoError(t, os.Chtimes(filepath.Join(registryDir, "locks", entries[0].Name()), old, old))
 
 		release2, err := acquireLock(registryDir, pluginRoot)
-		require.NoError(t, err, "acquireLock should reclaim a stale lock rather than fail")
+		require.ErrorContains(t, err, "already in progress")
+		assert.Nil(t, release2)
+		assert.NotContains(t, err.Error(), "remove the lock file")
 
-		t.Cleanup(release2)
-
-		// release is now a no-op against a lock file that reclamation
-		// already removed and acquireLock already recreated; nothing
-		// further to assert here beyond acquireLock's own success above.
 		release()
+
+		release2, err = acquireLock(registryDir, pluginRoot)
+		require.NoError(t, err, "only releasing the OS lock allows the next sync")
+		release2()
 	})
 }
 
-func TestReclaimStaleLock(t *testing.T) {
-	t.Run("does not reclaim a fresh lock file", func(t *testing.T) {
-		lockPath := filepath.Join(t.TempDir(), "test.lock")
+func TestAcquireLockDirectoryFailure(t *testing.T) {
+	registryDir := filepath.Join(t.TempDir(), "state-file")
+	require.NoError(t, os.WriteFile(registryDir, nil, 0o600))
 
-		require.NoError(t, os.WriteFile(lockPath, []byte("pid=1\n"), 0644), "should be able to write a fresh lock file")
-
-		assert.False(t, reclaimStaleLock(lockPath), "a fresh lock file should not be reclaimed")
-
-		_, err := os.Stat(lockPath)
-		assert.NoError(t, err, "a fresh lock file should not be removed")
-	})
-
-	t.Run("reclaims a lock file older than lockStaleAfter", func(t *testing.T) {
-		lockPath := filepath.Join(t.TempDir(), "test.lock")
-
-		require.NoError(t, os.WriteFile(lockPath, []byte("pid=1\n"), 0644), "should be able to write a lock file")
-
-		staleTime := time.Now().Add(-2 * lockStaleAfter)
-		require.NoError(t, os.Chtimes(lockPath, staleTime, staleTime), "should be able to backdate the lock file's mtime")
-
-		assert.True(t, reclaimStaleLock(lockPath), "a lock file older than lockStaleAfter should be reclaimed")
-
-		_, err := os.Stat(lockPath)
-		assert.True(t, os.IsNotExist(err), "a reclaimed lock file should have been removed")
-	})
-
-	t.Run("reports false for a lock file that does not exist", func(t *testing.T) {
-		assert.False(t, reclaimStaleLock(filepath.Join(t.TempDir(), "missing.lock")), "a missing lock file should not be reported as reclaimed")
-	})
+	release, err := acquireLock(registryDir, filepath.Join(t.TempDir(), "skills"))
+	require.ErrorContains(t, err, "could not acquire skills sync lock")
+	assert.Nil(t, release)
 }

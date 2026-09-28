@@ -1498,6 +1498,10 @@ func TestSyncCommandRunLockContention(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
+	var unblock sync.Once
+
+	defer unblock.Do(func() { close(release) })
+
 	cmd, _, _ := newTestSyncSetup(t, ts)
 
 	cmd2 := cmd
@@ -1508,11 +1512,19 @@ func TestSyncCommandRunLockContention(t *testing.T) {
 
 	<-listReached
 
-	err := cmd2.Run()
+	locksDir := filepath.Join(cmd.registryDir, "locks")
+	entries, err := os.ReadDir(locksDir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	old := time.Now().Add(-time.Hour)
+	require.NoError(t, os.Chtimes(filepath.Join(locksDir, entries[0].Name()), old, old))
+
+	err = cmd2.Run()
 	require.Error(t, err, "a concurrent Run against the same plugin root should fail while the first Run is in flight")
 	assert.Contains(t, err.Error(), "already in progress", "the error should explain that a sync is already in progress")
 
-	close(release)
+	unblock.Do(func() { close(release) })
 
 	require.NoError(t, <-errCh, "the first Run should still succeed once unblocked")
 }

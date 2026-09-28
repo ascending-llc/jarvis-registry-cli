@@ -120,21 +120,16 @@ linters:
           - gosec
         # manifest, synced SKILL.md, and CLI-owned plugin.json/wrapper SKILL.md files hold no secrets; world-readability is intended
         text: 'G306: Expect WriteFile permissions to be 0600 or less'
-      - path: '^skills/(skills|pluginfiles|lock|symlink)\.go$'
+      - path: '^skills/(skills|pluginfiles|symlink)\.go$'
         linters:
           - gosec
-        # synced skills, personal link directories, .claude-plugin/, and advisory locks hold no secrets; 0755 is intentional
+        # synced skills, personal link directories, and .claude-plugin/ hold no secrets; 0755 is intentional
         text: 'G301: Expect directory permissions to be 0750 or less'
-      - path: '^skills/(pluginfiles|lock|symlink)\.go$'
+      - path: '^skills/(pluginfiles|symlink)\.go$'
         linters:
           - gosec
         # paths are built from package constants and the configured pluginRoot/registryDir/user home, not from untrusted external input
         text: 'G304: Potential file inclusion via variable'
-      - path: '^skills/lock\.go$'
-        linters:
-          - gosec
-        # the lock file holds only a pid and a timestamp, no secrets; world-readability is intentional
-        text: 'G302: Expect file permissions to be 0600 or less'
       - path: '^skills/skills_test\.go$'
         linters:
           - gosec

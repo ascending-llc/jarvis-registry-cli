@@ -82,7 +82,7 @@ const (
 
 	// RegistryDirName is the name of the per-user directory, under the
 	// user's home directory, that holds the CLI's config file and its
-	// advisory sync locks (see skills.acquireLock), plus personal
+	// skills sync and self-update locks, plus personal
 	// Codex/Copilot skill roots. Each manifest lives inside the resolved
 	// sync root.
 	RegistryDirName = ".jarvis-registry"
