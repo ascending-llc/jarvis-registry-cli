@@ -4,8 +4,13 @@ complete -c jarvis-registry -f
 complete -c jarvis-registry -n '__fish_use_subcommand' -a auth -d 'Manage Registry authentication.'
 complete -c jarvis-registry -n '__fish_use_subcommand' -a configure -d 'Interactively configure the CLI, e.g. the Registry base URL.'
 complete -c jarvis-registry -n '__fish_use_subcommand' -a skills -d 'Manage local skills sync.'
+complete -c jarvis-registry -n '__fish_use_subcommand' -a update -d 'Download and install the latest release.'
 complete -c jarvis-registry -n '__fish_use_subcommand' -s v -l version -d 'Print version and exit.'
 complete -c jarvis-registry -n '__fish_use_subcommand' -s h -l help -d 'Show context-sensitive help.'
+
+# update subcommand: check and help.
+complete -c jarvis-registry -n '__fish_seen_subcommand_from update' -l check -d 'Report whether a newer version is available, without installing it.'
+complete -c jarvis-registry -n '__fish_seen_subcommand_from update' -s h -l help -d 'Show context-sensitive help.'
 
 # configure subcommand: help.
 complete -c jarvis-registry -n '__fish_seen_subcommand_from configure' -s h -l help -d 'Show context-sensitive help.'

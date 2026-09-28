@@ -24,11 +24,14 @@ jobs:
         with:
           go-version: "^1.24.1"
 
+      - name: Test self-update, shared locks, and Windows archive replacement
+        run: go test -race ./update ./internal/lockfile
+
       - name: Test junction dependency
         run: go test github.com/nyaosorg/go-windows-junction
 
       - name: Test personal-scope sync and junction lifecycle
-        run: go test -race ./skills -run "Test(Symlink|PruneDanglingLinks|SyncCommandRunPersonalScope|SyncCommandPersonalScopeInteractiveValidation|ManifestReadWriterReplacesReadOnlyManifest)"
+        run: go test -race ./skills -run "Test(AcquireLock|SyncCommandRunLockContention|Symlink|PruneDanglingLinks|SyncCommandRunPersonalScope|SyncCommandPersonalScopeInteractiveValidation|ManifestReadWriterReplacesReadOnlyManifest)"
 
   test-and-lint:
     runs-on: ubuntu-latest
