@@ -103,7 +103,7 @@ linters:
       - path: '^auth/auth\.go$'
         linters:
           - gosec
-        # only marshaled to hand off to creds.Write, which stores it in the OS keyring; never logged or written to disk
+        # only marshaled for creds.Store: OS keyring or the explicit 0600 plaintext fallback; never logged
         text: 'G117: Marshaled struct field "AccessToken" \(JSON key "access_token"\) matches secret pattern'
       - path: '^skills/client\.go$'
         linters:
@@ -163,7 +163,7 @@ linters:
       - path: '^auth/auth_test\.go$'
         linters:
           - gosec
-        # only marshaled to seed the mocked keyring for test setup; never logged or written to disk
+        # only marshaled to seed mock keyrings or isolated temporary credentials files for tests; never logged
         text: 'G117: Marshaled struct field "AccessToken" \(JSON key "access_token"\) matches secret pattern'
       - path: '^auth/(login|status)_test\.go$'
         linters:
@@ -229,6 +229,33 @@ linters:
           - gosec
         # The destination is a fixed basename inside t.TempDir(); the copied executable bytes cannot select a path.
         text: 'G703: Path traversal via taint analysis'
+
+      - path: '^creds/file_test\.go$'
+        linters:
+          - gosec
+        # A temporary 0755 directory verifies existing config directory permissions are preserved.
+        text: 'G301: Expect directory permissions to be 0750 or less'
+      - path: '^creds/file_test\.go$'
+        linters:
+          - gosec
+        # An empty 0644 fixture verifies credential writes replace it with a 0600 file.
+        text: 'G306: Expect WriteFile permissions to be 0600 or less'
+      - path: '^creds/file_test\.go$'
+        linters:
+          - gosec
+        # Set the empty fixture to exactly 0644 regardless of umask to test permission tightening.
+        text: 'G302: Expect file permissions to be 0600 or less'
+      - path: '^creds/file_test\.go$'
+        linters:
+          - gosec
+        # Paths are fixed filenames inside t.TempDir(), with no external input.
+        text: 'G304: Potential file inclusion via variable'
+
+      - path: '^skills/skills_test\.go$'
+        linters:
+          - gosec
+        # Fake OAuth tokens are marshaled only into a temporary credentials file for the sync test.
+        text: 'G117: Marshaled struct field "AccessToken" \(JSON key "access_token"\) matches secret pattern'
 
 issues:
   max-issues-per-linter: 0

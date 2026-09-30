@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"runtime"
 	"testing"
 	"time"
 
@@ -159,6 +160,13 @@ func TestStatusCommandRun(t *testing.T) {
 		cmd.exitFunc = func(code int) { exitCode = code }
 
 		err := cmd.Run()
+		if runtime.GOOS == "linux" {
+			require.NoError(t, err)
+			assert.Equal(t, 1, exitCode)
+
+			return
+		}
+
 		require.Error(t, err, "Run should surface a keyring failure that is not ErrCredentialsNotExist as a real error")
 		assert.Contains(t, err.Error(), "failed to check Registry authentication status", "error should be wrapped with the command's own context")
 

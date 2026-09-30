@@ -41,7 +41,7 @@ func TestKeyringReadWriter_ReadOtherFailure(t *testing.T) {
 	rw := NewReadWriter("test-service", "test-user")
 
 	_, err := rw.Read()
-	require.Error(t, err, "Read should surface a non-ErrNotFound keyring failure")
+	require.ErrorContains(t, err, "failed to read credentials from OS keyring")
 
 	assert.NotErrorIs(t, err, ErrCredentialsNotExist, "a generic keyring failure should not be reported as ErrCredentialsNotExist")
 	assert.Contains(t, err.Error(), wantErr.Error(), "the error message should include the underlying keyring failure")
@@ -57,4 +57,22 @@ func TestKeyringReadWriter_WriteFailure(t *testing.T) {
 	require.Error(t, err, "Write should surface a keyring failure")
 
 	assert.ErrorIs(t, err, ErrCredentialWriteFailure, "Write should wrap ErrCredentialWriteFailure on a keyring failure")
+}
+
+func TestKeyringReadWriterDelete(t *testing.T) {
+	keyring.MockInit()
+
+	rw := NewReadWriter("service", "user")
+	assert.Equal(t, "keyring", rw.Location())
+	require.ErrorIs(t, rw.Delete(), ErrCredentialsNotExist)
+	require.NoError(t, rw.Write([]byte("value")))
+	require.NoError(t, rw.Delete())
+	_, err := rw.Read()
+	require.ErrorIs(t, err, ErrCredentialsNotExist)
+	keyring.MockInitWithError(errors.New("backend unavailable"))
+
+	err = rw.Delete()
+	require.ErrorContains(t, err, "failed to delete credentials from OS keyring")
+	assert.Contains(t, err.Error(), "backend unavailable")
+	assert.NotErrorIs(t, err, ErrCredentialsNotExist)
 }

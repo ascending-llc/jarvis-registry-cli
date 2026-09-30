@@ -1,10 +1,16 @@
 package auth
 
 import (
+	"bytes"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -124,6 +130,86 @@ func TestLoginCommandRun(t *testing.T) {
 	})
 }
 
+func TestLoginCommandWithoutBrowser(t *testing.T) {
+	for _, denied := range []bool{false, true} {
+		name := "authorized after pending"
+		if denied {
+			name = "authorization denied"
+		}
+
+		t.Run(name, func(t *testing.T) {
+			// Exercise the real browser callback without starting a desktop browser.
+			t.Setenv("PATH", t.TempDir())
+
+			var tokenRequests atomic.Int32
+
+			ts := newRealPathAuthServer(t, deviceCodeHandler(t), func(w http.ResponseWriter, r *http.Request) {
+				require.NoError(t, r.ParseForm())
+				assert.Equal(t, "urn:ietf:params:oauth:grant-type:device_code", r.FormValue("grant_type"))
+				assert.Equal(t, "DEVICE123", r.FormValue("device_code"))
+
+				if tokenRequests.Add(1) == 1 {
+					writeJSONErrorResponse(t, w, http.StatusBadRequest, "authorization_pending", "waiting for approval")
+
+					return
+				}
+
+				if denied {
+					writeJSONErrorResponse(t, w, http.StatusBadRequest, "access_denied", "authorization denied")
+
+					return
+				}
+
+				writeJSONTokenResponse(t, w, http.StatusOK, "device-access-token", "device-refresh-token")
+			})
+			defer ts.Close()
+
+			home := mockUserHomeDir(t)
+			dir := filepath.Join(home, cfg.RegistryDirName)
+			require.NoError(t, os.MkdirAll(dir, 0o700))
+
+			config := fmt.Sprintf("registry:\n  base_url: %s\nlocal:\n  credentials:\n    file_only: true\n", ts.URL)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(config), 0o600))
+
+			var out bytes.Buffer
+
+			cmd := &LoginCommand{}
+			require.NoError(t, cmd.BeforeReset())
+			cmd.logger = log.New(&out, "", 0)
+			require.NoError(t, cmd.AfterApply())
+			cmd.resolver.flow.Stdout = &out
+
+			cmd.resolver.flow.Stdin = strings.NewReader("") // Headless stdin is already at EOF.
+			if denied {
+				cmd.resolver.flow.Stdin = strings.NewReader("\n")
+			}
+
+			err := cmd.Run()
+
+			assert.Equal(t, int32(2), tokenRequests.Load(), "browser failure must not stop polling")
+			assert.Contains(t, out.String(), "USER-CODE")
+			assert.Contains(t, out.String(), "Open http://example.com/verify in a browser and enter the code above")
+			assert.Contains(t, out.String(), "Waiting for authorization")
+			assert.NotContains(t, out.String(), "device-access-token")
+			assert.NotContains(t, out.String(), "device-refresh-token")
+
+			if denied {
+				require.ErrorContains(t, err, "failed to log in to the Registry")
+				assert.Contains(t, err.Error(), "access_denied")
+				assert.NotContains(t, out.String(), "✓ Logged in")
+				assert.NoFileExists(t, cmd.resolver.CredentialsLocation())
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Contains(t, out.String(), "✓ Logged in")
+			assert.FileExists(t, cmd.resolver.CredentialsLocation())
+			assertStoredAccessToken(t, cmd.resolver.creds, "device-access-token")
+		})
+	}
+}
+
 // newRealPathAuthServer wires up a test server exposing the device/token
 // endpoints at the same paths NewRegistryTokenResolver builds in
 // production (deviceCodePath/tokenPath), unlike newAuthServer's
@@ -165,12 +251,9 @@ func newTestLoginCommand(t *testing.T, authBaseUrl string) *LoginCommand {
 	return cmd
 }
 
-// stubDeviceFlowInteraction replaces the resolver's user-interaction
-// callbacks with no-ops. NewRegistryTokenResolver leaves oauth.Flow's
-// DisplayCode and BrowseURL nil, which is correct in production (the
-// underlying library falls back to printing a code and waiting on stdin,
-// then opening a real browser) but unusable in a test process — any test
-// path that reaches the device flow needs these stubbed first.
+// stubDeviceFlowInteraction disables code prompts and browser launches for
+// tests that do not exercise user interaction. Headless-login tests retain
+// the production callbacks and supply the flow's stdin/stdout instead.
 func stubDeviceFlowInteraction(r *RegistryTokenResolver) {
 	r.flow.DisplayCode = func(string, string) error { return nil }
 	r.flow.BrowseURL = func(string) error { return nil }

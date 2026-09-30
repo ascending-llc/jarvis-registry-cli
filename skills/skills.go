@@ -236,7 +236,7 @@ func (c *SyncCommand) AfterApply() (err error) {
 	c.skipIds = config.Local.Skills.SkipIds
 	c.override = config.Local.Skills.Link.Override
 
-	c.tp = auth.NewRegistryTokenResolver(c.authBaseUrl, auth.RegistryScopes, c.logger)
+	c.tp = auth.NewRegistryTokenResolver(c.authBaseUrl, auth.RegistryScopes, c.registryDir, config.Local.Credentials.FileOnly, c.logger)
 
 	return nil
 }

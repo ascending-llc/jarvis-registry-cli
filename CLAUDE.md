@@ -19,7 +19,7 @@ Any change to the CLI surface (new/renamed/removed subcommand or flag) has no ge
 ## Config and auth
 
 - New config fields belong on `cfg.Config` with a `mapstructure` tag. Validate and resolve them inside `cfg.Load` the way `Local.Skills.SkipIds`/`Registry.BaseUrl` already are — fail loudly with a path-qualified error, don't silently coerce.
-- Credentials go through `creds.KeyringReadWriter` into the OS keyring — never written to disk or logged. New commands needing Registry access should reuse `auth.NewRegistryTokenResolver` (device grant + refresh + keyring caching already implemented) rather than reimplementing token retrieval.
+- Credentials go through `creds.Store`: the OS keyring, or the `0600` `~/.jarvis-registry/credentials.json` fallback (automatic on Linux without a usable keyring, or forced via `local.credentials.file_only`). They are never logged. New commands needing Registry access should reuse `auth.NewRegistryTokenResolver` (device grant + refresh + credential caching already implemented) rather than reimplementing token retrieval.
 
 ## Package layout and naming
 

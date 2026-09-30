@@ -27,6 +27,9 @@ jobs:
       - name: Test self-update, shared locks, and Windows archive replacement
         run: go test -race ./update ./internal/lockfile
 
+      - name: Test authentication, credential storage, and configuration
+        run: go test -race ./auth ./creds ./cfg
+
       - name: Test junction dependency
         run: go test github.com/nyaosorg/go-windows-junction
 

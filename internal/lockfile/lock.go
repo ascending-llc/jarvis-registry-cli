@@ -15,9 +15,10 @@ import (
 var ErrInUse = errors.New("lock is already in use")
 
 // Acquire takes a nonblocking OS lock under registryDir/locks. Callers supply a
-// fixed namespace and a resolved, absolute target path. Distinct namespaces,
-// targets, and registry directories do not contend. The returned lock must be
-// closed when the operation finishes; the OS also releases it on process exit.
+// fixed namespace and a stable target key: a resolved absolute path when this
+// directory holds locks for multiple locations, or a filename when it is scoped
+// to the target's parent. Distinct namespaces, keys, and physical lock directories
+// do not contend. Close the lock when finished; process exit also releases it.
 // Keep the file after closing: unlinking it can let contenders lock different
 // inodes for the same target. A file's age never indicates whether it is held.
 func Acquire(registryDir, namespace, target string) (*flock.Flock, error) {

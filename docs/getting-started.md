@@ -6,9 +6,38 @@ Complete the [setup guide](setup.md), then authenticate with your organization's
 jarvis-registry auth login
 ```
 
-The browser-based sign-in stores credentials in your OS keyring, never in a plain-text file. Check
-the current session and its granted token scopes with `jarvis-registry auth status`. The status
-command exits with status `1` when you are not logged in, so it can be used in scripts.
+If the CLI cannot open a browser, it prints a verification URL and keeps waiting for authorization.
+Open that URL in a browser on this or another device and enter the one-time code shown by the CLI.
+Keep the command running until authorization finishes.
+
+The browser-based sign-in normally stores credentials in your OS keyring. On Linux without a
+usable keyring, including containers and minimal WSL2 environments, the CLI automatically stores
+them in plaintext at `~/.jarvis-registry/credentials.json` with mode `0600` and prints a warning
+to stderr when it first creates the service's entry. Later token refreshes update that entry
+without repeating the warning. A file entry takes precedence over any old keyring entry.
+
+Check the current session, credentials location, and granted token scopes with
+`jarvis-registry auth status`. The status command exits with status `1` when you are not logged in,
+so it can be used in scripts. macOS and Windows use the keyring by default; automatic fallback
+is Linux-only.
+
+Run `jarvis-registry auth logout` to remove the configured auth server's cached credentials from
+both stores (only the file in file-only mode). Other servers' entries are preserved. This clears local credentials; it does not
+revoke server-side tokens or end browser SSO sessions. Logout exits with status `1` when no
+credentials are cached. A subsequent login retries the keyring unless file-only mode is enabled.
+
+To use the plaintext file explicitly on any OS, hand-edit `~/.jarvis-registry/config.yaml`:
+
+```yaml
+local:
+  credentials:
+    file_only: true
+```
+
+This setting bypasses the keyring entirely, without a warning: logins, token refreshes, and logout
+use only the file. A keyring entry left from before enabling it is not removed. Use YAML `true` or `false`, not quoted strings
+or numbers. `configure` does not prompt for this setting. The file is not encrypted; Unix file
+permissions restrict access to its owner.
 
 ## Claude Code
 
@@ -97,6 +126,7 @@ The config file is stored at `~/.jarvis-registry/config.yaml`.
 | --- | --- | --- | --- |
 | `registry.base_url` | `configure` | yes | Registry API origin, such as `https://registry.acme.example.com`. |
 | `registry.auth_base_url` | hand-edit | no | OAuth origin override for local Registry development. |
+| `local.credentials.file_only` | hand-edit | no | Always store credentials in `~/.jarvis-registry/credentials.json` instead of the OS keyring. Defaults to `false`. |
 | `local.skills.mode` | `configure` | unless `--mode` is passed | Default mode: `claude`, `codex`, or `copilot`. |
 | `local.skills.skip_ids` | hand-edit | no | Registry skill IDs that must not be created, updated, or retained locally. |
 | `local.skills.link.override` | hand-edit | no | Replace personal-scope Codex/Copilot entries that collide with desired skill names. Defaults to `false`. |

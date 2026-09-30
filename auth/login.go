@@ -10,7 +10,7 @@ import (
 )
 
 // LoginCommand implements the "auth login" subcommand: it ensures a valid
-// Registry access token is cached in the OS keyring, running the OAuth
+// Registry access token is cached in the credential store, running the OAuth
 // device flow if necessary.
 type LoginCommand struct {
 	userHomeDir    string
@@ -46,7 +46,7 @@ func (c *LoginCommand) AfterApply() (err error) {
 	}
 
 	c.authBaseUrl = config.Registry.AuthBaseUrl
-	c.resolver = NewRegistryTokenResolver(c.authBaseUrl, RegistryScopes, c.logger)
+	c.resolver = NewRegistryTokenResolver(c.authBaseUrl, RegistryScopes, c.registryDir, config.Local.Credentials.FileOnly, c.logger)
 
 	return nil
 }

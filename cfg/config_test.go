@@ -84,13 +84,26 @@ func TestLoadMissingConfig(t *testing.T) {
 }
 
 func TestLoadPreservesReadErrorBehavior(t *testing.T) {
-	registryDir := filepath.Join(t.TempDir(), "not-a-directory")
-	require.NoError(t, os.WriteFile(registryDir, []byte("not a directory"), 0600))
+	for _, name := range []string{"config.yaml", "config.yml"} {
+		t.Run(name, func(t *testing.T) {
+			registryDir := t.TempDir()
+			path := filepath.Join(registryDir, name)
+			// A directory at the file path fails to read on every supported OS.
+			require.NoError(t, os.Mkdir(path, 0o700))
 
-	_, err := Load(registryDir)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to read config file at "+filepath.Join(registryDir, "config.yaml"))
-	assert.NotContains(t, err.Error(), "failed to resolve config file")
+			_, err := Load(registryDir)
+			require.ErrorContains(t, err, "failed to read config file at "+path)
+			assert.NotContains(t, err.Error(), "failed to resolve config file")
+		})
+	}
+
+	t.Run("invalid parent path", func(t *testing.T) {
+		registryDir := filepath.Join(t.TempDir(), "invalid\x00directory")
+
+		_, err := Load(registryDir)
+		require.ErrorContains(t, err, "failed to read config file at "+filepath.Join(registryDir, "config.yaml"))
+		assert.NotContains(t, err.Error(), "failed to resolve config file")
+	})
 }
 
 func TestLoadInvalid(t *testing.T) {
@@ -117,6 +130,36 @@ func TestLoadInvalid(t *testing.T) {
 			for _, want := range c.wantErrContains {
 				assert.Contains(t, err.Error(), want, "error message should also contain %q", want)
 			}
+		})
+	}
+}
+
+func TestLoadCredentialsFileOnly(t *testing.T) {
+	for _, tc := range []struct {
+		fixture string
+		want    bool
+		invalid bool
+	}{
+		{fixture: "valid-base-url"},
+		{fixture: "valid-credentials-keyring"},
+		{fixture: "valid-credentials-file-only", want: true},
+		{fixture: "invalid-credentials-file-only-string", invalid: true},
+		{fixture: "invalid-credentials-file-only-number", invalid: true},
+		{fixture: "invalid-credentials-file-only-value", invalid: true},
+		{fixture: "invalid-credentials-file-only-null", invalid: true},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			dir := filepath.Join("testdata", tc.fixture)
+
+			config, err := Load(dir)
+			if tc.invalid {
+				require.ErrorContains(t, err, "invalid local.credentials.file_only in "+filepath.Join(dir, "config.yaml"))
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, config.Local.Credentials.FileOnly)
 		})
 	}
 }

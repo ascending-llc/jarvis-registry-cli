@@ -22,6 +22,7 @@ func main() {
 		Auth      struct {
 			Login  auth.LoginCommand  `cmd:"" name:"login" help:"Log in to the Registry."`
 			Status auth.StatusCommand `cmd:"" name:"status" help:"Show Registry authentication status."`
+			Logout auth.LogoutCommand `cmd:"" name:"logout" help:"Log out of the Registry."`
 		} `cmd:"" name:"auth" help:"Manage Registry authentication."`
 		Version kong.VersionFlag `short:"v" help:"Print version and exit."`
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cli/browser"
 	"github.com/cli/oauth"
 	"github.com/cli/oauth/api"
 
@@ -24,21 +25,29 @@ type (
 		Println(v ...any)
 	}
 
+	// credentialStore is the storage contract consumed by the token resolver.
+	credentialStore interface {
+		Read() ([]byte, error)
+		Write([]byte) error
+		Delete() error
+		Location() string
+	}
+
 	// RegistryTokenResolver resolves a Jarvis Registry access token,
 	// performing an OAuth device grant when no cached token exists and
 	// transparently refreshing an expired one. Resolved tokens are cached
-	// in the OS keyring via creds.KeyringReadWriter.
+	// in the credential store via creds.Store.
 	RegistryTokenResolver struct {
 		flow          *oauth.Flow
 		logger        Logger
-		creds         creds.KeyringReadWriter
+		creds         credentialStore
 		deviceCodeUrl string
 		tokenUrl      string
 		scopes        []string
 	}
 
 	// StoredTokens is the JSON representation of the OAuth tokens cached
-	// in the OS keyring.
+	// in the credential store.
 	StoredTokens struct {
 		LastUpdate   time.Time `json:"last_update,omitzero"`
 		AccessToken  string    `json:"access_token"`
@@ -73,7 +82,7 @@ const (
 
 var (
 	// ErrNotAuthenticated indicates no valid Registry credentials are
-	// cached in the OS keyring and none could be obtained without user
+	// cached in the credential store and none could be obtained without user
 	// interaction. GetAccessToken and Status return it instead of running
 	// the OAuth device flow; only Login runs the device flow, via its own
 	// fallback.
@@ -93,13 +102,15 @@ var (
 // Registry API itself, but callers may pass a different one when the two
 // don't share an origin (e.g. local development). logger receives
 // diagnostic messages for non-fatal failures, such as failing to cache a
-// newly obtained token.
-func NewRegistryTokenResolver(authServerBaseUrl string, scopes []string, logger Logger) RegistryTokenResolver {
+// newly obtained token. registryDir holds the plaintext fallback file; fileOnly
+// forces that file for reads and writes instead of the OS keyring. If opening
+// a browser fails, login prints a verification URL and waits for manual authorization.
+func NewRegistryTokenResolver(authServerBaseUrl string, scopes []string, registryDir string, fileOnly bool, logger Logger) RegistryTokenResolver {
 	authServerBaseUrl = strings.TrimSuffix(authServerBaseUrl, "/")
 
 	r := RegistryTokenResolver{
 		logger:        logger,
-		creds:         creds.NewReadWriter(fmt.Sprintf("%s:%s", jarvisRegistryService, authServerBaseUrl), jarvisRegistryCli),
+		creds:         creds.NewStore(fmt.Sprintf("%s:%s", jarvisRegistryService, authServerBaseUrl), jarvisRegistryCli, registryDir, fileOnly),
 		deviceCodeUrl: authServerBaseUrl + deviceCodePath,
 		tokenUrl:      authServerBaseUrl + tokenPath,
 		scopes:        scopes,
@@ -113,6 +124,13 @@ func NewRegistryTokenResolver(authServerBaseUrl string, scopes []string, logger 
 		ClientID:   clientId,
 		Scopes:     scopes,
 		HTTPClient: registryHttp.DefaultClient,
+		BrowseURL: func(verificationURL string) error {
+			if err := browser.OpenURL(verificationURL); err != nil {
+				logger.Printf("\nCould not open a browser automatically.\nOpen %s in a browser and enter the code above. Waiting for authorization...\n", verificationURL)
+			}
+
+			return nil
+		},
 	}
 
 	return r
@@ -149,8 +167,8 @@ func (r RegistryTokenResolver) resolveCached() (StoredTokens, error) {
 	return st, nil
 }
 
-// GetAccessToken returns a valid Registry access token from the OS
-// keyring, refreshing it first if it has expired. It never performs the
+// GetAccessToken returns a valid Registry access token from the credential
+// store, refreshing it first if it has expired. It never performs the
 // OAuth device flow — callers that hit ErrNotAuthenticated should tell the
 // user to run "jarvis-registry auth login".
 func (r RegistryTokenResolver) GetAccessToken() (string, error) {
@@ -201,7 +219,7 @@ func (r RegistryTokenResolver) Status() (st StoredTokens, loggedIn bool, err err
 }
 
 // deviceFlow runs the OAuth device grant, populating st with the
-// resulting tokens. Caching the tokens in the OS keyring is best-effort:
+// resulting tokens. Caching the tokens in the credential store is best-effort:
 // a caching failure is logged, not returned, so a successful token
 // exchange still succeeds even if it can't be persisted.
 func (r RegistryTokenResolver) deviceFlow(st *StoredTokens) error {
@@ -231,7 +249,7 @@ func (r RegistryTokenResolver) deviceFlow(st *StoredTokens) error {
 
 // refreshFlow exchanges refreshToken for a new access/refresh token pair
 // via the OAuth refresh grant, populating st with the result. As with
-// deviceFlow, caching the refreshed tokens in the OS keyring is
+// deviceFlow, caching the refreshed tokens in the credential store is
 // best-effort: a caching failure is logged, not returned.
 func (r RegistryTokenResolver) refreshFlow(refreshToken string, st *StoredTokens) error {
 	values := url.Values{
@@ -267,4 +285,24 @@ func (r RegistryTokenResolver) refreshFlow(refreshToken string, st *StoredTokens
 	}
 
 	return nil
+}
+
+// Logout removes cached Registry credentials from every credential store in
+// use (only the file in file-only mode).
+// The next Login runs the OAuth device flow. No server-side tokens are revoked.
+func (r RegistryTokenResolver) Logout() error {
+	if err := r.creds.Delete(); err != nil {
+		if errors.Is(err, creds.ErrCredentialsNotExist) {
+			return ErrNotAuthenticated
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+// CredentialsLocation reports the current credentials storage location.
+func (r RegistryTokenResolver) CredentialsLocation() string {
+	return r.creds.Location()
 }

@@ -15,9 +15,10 @@ complete -c jarvis-registry -n '__fish_seen_subcommand_from update' -s h -l help
 # configure subcommand: help.
 complete -c jarvis-registry -n '__fish_seen_subcommand_from configure' -s h -l help -d 'Show context-sensitive help.'
 
-# auth subcommand: login/status and help.
-complete -c jarvis-registry -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from login status' -a login -d 'Log in to the Registry.'
-complete -c jarvis-registry -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from login status' -a status -d 'Show Registry authentication status.'
+# auth subcommand: login/status/logout and help.
+complete -c jarvis-registry -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from login status logout' -a login -d 'Log in to the Registry.'
+complete -c jarvis-registry -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from login status logout' -a status -d 'Show Registry authentication status.'
+complete -c jarvis-registry -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from login status logout' -a logout -d 'Log out of the Registry.'
 complete -c jarvis-registry -n '__fish_seen_subcommand_from auth' -s h -l help -d 'Show context-sensitive help.'
 
 # skills subcommand: sync/show and help.
