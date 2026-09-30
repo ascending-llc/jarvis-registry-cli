@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cli/browser"
 	"github.com/cli/oauth"
 	"github.com/cli/oauth/api"
 
@@ -102,7 +103,8 @@ var (
 // don't share an origin (e.g. local development). logger receives
 // diagnostic messages for non-fatal failures, such as failing to cache a
 // newly obtained token. registryDir holds the plaintext fallback file; fileOnly
-// forces that file for reads and writes instead of the OS keyring.
+// forces that file for reads and writes instead of the OS keyring. If opening
+// a browser fails, login prints a verification URL and waits for manual authorization.
 func NewRegistryTokenResolver(authServerBaseUrl string, scopes []string, registryDir string, fileOnly bool, logger Logger) RegistryTokenResolver {
 	authServerBaseUrl = strings.TrimSuffix(authServerBaseUrl, "/")
 
@@ -122,6 +124,13 @@ func NewRegistryTokenResolver(authServerBaseUrl string, scopes []string, registr
 		ClientID:   clientId,
 		Scopes:     scopes,
 		HTTPClient: registryHttp.DefaultClient,
+		BrowseURL: func(verificationURL string) error {
+			if err := browser.OpenURL(verificationURL); err != nil {
+				logger.Printf("\nCould not open a browser automatically.\nOpen %s in a browser and enter the code above. Waiting for authorization...\n", verificationURL)
+			}
+
+			return nil
+		},
 	}
 
 	return r

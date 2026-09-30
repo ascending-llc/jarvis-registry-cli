@@ -23,9 +23,10 @@ If keyring access hangs on an unlock prompt, set `local.credentials.file_only: t
 returned errors; it cannot interrupt a hanging call.
 
 Use `jarvis-registry auth logout` to clear local credentials before logging in again. Logout
-attempts both stores, even in file-only mode. On Linux, an unavailable keyring is ignored during
-logout, so an inaccessible old keyring entry may remain; retry cleanup after restoring keyring
-access. On other OSes, keyring cleanup failures are reported.
+attempts both stores, even in file-only mode. Only Linux automatic fallback (`file_only: false`)
+ignores an unavailable keyring during logout, so an inaccessible old keyring entry may remain;
+retry cleanup after restoring keyring access. With `file_only: true`, keyring cleanup failures are
+reported on every OS. Non-Linux systems always report these failures.
 
 Credentials file parse and permission errors are reported without overwriting the file. If an
 operation reports that the credentials lock is in use, retry after the other CLI operation ends.

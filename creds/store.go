@@ -83,7 +83,7 @@ func (s Store) Write(content []byte) error {
 }
 
 // Delete attempts both stores even if one fails, including in file-only mode.
-// Linux ignores unavailable keyrings; file errors and other OS errors are returned.
+// Only Linux automatic fallback ignores unavailable keyrings; file-only mode reports errors.
 func (s Store) Delete() error {
 	fileErr := s.file.Delete()
 	keyringErr := s.keyring.Delete()
@@ -93,7 +93,7 @@ func (s Store) Delete() error {
 		failures = append(failures, fileErr)
 	}
 
-	if keyringErr != nil && !errors.Is(keyringErr, ErrCredentialsNotExist) && !s.fallback {
+	if keyringErr != nil && !errors.Is(keyringErr, ErrCredentialsNotExist) && (!s.fallback || s.fileOnly) {
 		failures = append(failures, keyringErr)
 	}
 

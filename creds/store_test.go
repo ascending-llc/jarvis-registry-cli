@@ -168,13 +168,48 @@ func TestStoreDelete(t *testing.T) {
 }
 
 func TestStoreDeleteBackendFailure(t *testing.T) {
-	for _, fileOnly := range []bool{false, true} {
-		keyring.MockInitWithError(errors.New("backend unavailable"))
+	for _, tc := range []struct {
+		name     string
+		fallback bool
+		fileOnly bool
+	}{
+		{name: "non-linux"},
+		{name: "non-linux file-only", fileOnly: true},
+		{name: "linux fallback", fallback: true},
+		{name: "linux file-only", fallback: true, fileOnly: true},
+	} {
+		for _, cached := range []bool{false, true} {
+			name := tc.name + "/missing"
+			if cached {
+				name = tc.name + "/cached"
+			}
 
-		s, _ := newTestStore(t, false, fileOnly)
-		require.NoError(t, s.file.Write([]byte("value")))
-		require.ErrorContains(t, s.Delete(), "failed to delete credentials from OS keyring")
-		assert.NoFileExists(t, s.file.path, "file cleanup still runs on keyring failure")
+			t.Run(name, func(t *testing.T) {
+				keyring.MockInitWithError(errors.New("backend unavailable"))
+
+				s, _ := newTestStore(t, tc.fallback, tc.fileOnly)
+				if cached {
+					require.NoError(t, s.file.Write([]byte("value")))
+				}
+
+				err := s.Delete()
+				assert.NoFileExists(t, s.file.path, "file cleanup still runs on keyring failure")
+
+				if tc.fallback && !tc.fileOnly {
+					if cached {
+						require.NoError(t, err)
+					} else {
+						require.ErrorIs(t, err, ErrCredentialsNotExist)
+					}
+
+					return
+				}
+
+				require.ErrorContains(t, err, "failed to delete credentials from OS keyring")
+				assert.Contains(t, err.Error(), "backend unavailable")
+				assert.NotErrorIs(t, err, ErrCredentialsNotExist)
+			})
+		}
 	}
 }
 

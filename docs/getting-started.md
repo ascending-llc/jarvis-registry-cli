@@ -6,6 +6,10 @@ Complete the [setup guide](setup.md), then authenticate with your organization's
 jarvis-registry auth login
 ```
 
+If the CLI cannot open a browser, it prints a verification URL and keeps waiting for authorization.
+Open that URL in a browser on this or another device and enter the one-time code shown by the CLI.
+Keep the command running until authorization finishes.
+
 The browser-based sign-in normally stores credentials in your OS keyring. On Linux without a
 usable keyring, including containers and minimal WSL2 environments, the CLI automatically stores
 them in plaintext at `~/.jarvis-registry/credentials.json` with mode `0600` and prints a warning
@@ -31,8 +35,9 @@ local:
 ```
 
 This setting bypasses keyring reads and writes without a warning. Logout still attempts keyring
-cleanup. Use YAML `true` or `false`, not quoted strings or numbers. `configure` does not prompt
-for this setting. The file is not encrypted; Unix file permissions restrict access to its owner.
+cleanup and reports cleanup failures on every OS. Use YAML `true` or `false`, not quoted strings
+or numbers. `configure` does not prompt for this setting. The file is not encrypted; Unix file
+permissions restrict access to its owner.
 
 ## Claude Code
 

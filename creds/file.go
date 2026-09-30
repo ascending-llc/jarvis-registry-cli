@@ -109,7 +109,10 @@ func (rw FileReadWriter) update(change func(map[string]string) error) error {
 		return fmt.Errorf("failed to create credentials directory %s: %s", dir, err.Error())
 	}
 
-	lock, err := lockfile.Acquire(dir, "credentials", path)
+	// The lock directory already scopes this key to the credentials' parent.
+	// Using only the filename makes symlinks and Windows junctions share the
+	// same physical lock file without changing final-file replacement semantics.
+	lock, err := lockfile.Acquire(dir, "credentials", filepath.Base(path))
 	if err != nil {
 		return fmt.Errorf("failed to lock credentials file %s: %s", rw.path, err.Error())
 	}

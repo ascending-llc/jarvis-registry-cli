@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"testing"
 
+	junction "github.com/nyaosorg/go-windows-junction"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -116,28 +117,82 @@ func TestFileReadWriterIOFailure(t *testing.T) {
 }
 
 func TestFileReadWriterLockContention(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		child string
+		alias bool
+	}{
+		{name: "direct"},
+		{name: "directory alias", alias: true},
+		{name: "ancestor alias", child: "nested", alias: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+
+			storeRoot := root
+			if tc.alias {
+				storeRoot = filepath.Join(t.TempDir(), "alias")
+				require.NoError(t, junction.Create(root, storeRoot))
+			}
+
+			dir := filepath.Join(root, tc.child)
+			storePath := filepath.Join(storeRoot, tc.child, CredentialsFileName)
+
+			first := NewFileReadWriter(storePath, "first")
+			second := NewFileReadWriter(storePath, "second")
+			assert.Equal(t, storePath, first.Location())
+			require.NoError(t, first.Write([]byte("original")))
+
+			lock, err := lockfile.Acquire(dir, "credentials", CredentialsFileName)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = lock.Close() })
+
+			err = second.Write([]byte("second"))
+			require.ErrorIs(t, err, ErrCredentialWriteFailure)
+			assert.Contains(t, err.Error(), "lock is already in use")
+			require.ErrorContains(t, first.Delete(), "lock is already in use")
+			content, err := first.Read()
+			require.NoError(t, err)
+			assert.Equal(t, "original", string(content))
+
+			_, err = second.Read()
+			require.ErrorIs(t, err, ErrCredentialsNotExist)
+
+			require.NoError(t, lock.Close())
+			require.NoError(t, second.Write([]byte("second")))
+
+			content, err = first.Read()
+			require.NoError(t, err)
+			assert.Equal(t, "original", string(content))
+			require.NoError(t, first.Delete())
+
+			content, err = second.Read()
+			require.NoError(t, err)
+			assert.Equal(t, "second", string(content))
+		})
+	}
+}
+
+func TestFileReadWriterIndependentLocks(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, CredentialsFileName)
-	first := NewFileReadWriter(path, "first")
-	second := NewFileReadWriter(path, "second")
-
-	require.NoError(t, first.Write([]byte("original")))
-
-	lock, err := lockfile.Acquire(dir, "credentials", path)
+	lock, err := lockfile.Acquire(dir, "credentials", CredentialsFileName)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = lock.Close() })
 
-	err = second.Write([]byte("second"))
-	require.ErrorIs(t, err, ErrCredentialWriteFailure)
-	assert.Contains(t, err.Error(), "lock is already in use")
-	require.ErrorContains(t, first.Delete(), "lock is already in use")
-	content, err := first.Read()
-	require.NoError(t, err)
-	assert.Equal(t, "original", string(content))
-	require.NoError(t, lock.Close())
-	require.NoError(t, second.Write([]byte("second")))
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "different filename", path: filepath.Join(dir, "other.json")},
+		{name: "different directory", path: filepath.Join(t.TempDir(), CredentialsFileName)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rw := NewFileReadWriter(tc.path, "service")
+			require.NoError(t, rw.Write([]byte("value")))
 
-	content, err = first.Read()
-	require.NoError(t, err)
-	assert.Equal(t, "original", string(content))
+			content, err := rw.Read()
+			require.NoError(t, err)
+			assert.Equal(t, "value", string(content))
+		})
+	}
 }

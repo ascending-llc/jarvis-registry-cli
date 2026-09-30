@@ -114,26 +114,60 @@ func TestAuthCommandLifecycle(t *testing.T) {
 }
 
 func TestLogoutCommandBackendFailure(t *testing.T) {
-	keyring.MockInitWithError(errors.New("keyring backend unavailable"))
+	for _, tc := range []struct {
+		name     string
+		fileOnly bool
+		cached   bool
+	}{
+		{name: "default missing"},
+		{name: "default cached", cached: true},
+		{name: "file-only missing", fileOnly: true},
+		{name: "file-only cached", fileOnly: true, cached: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			keyring.MockInitWithError(errors.New("keyring backend unavailable"))
 
-	var out bytes.Buffer
+			dir := t.TempDir()
 
-	cmd := &LogoutCommand{
-		logger:   log.New(&out, "", 0),
-		resolver: NewRegistryTokenResolver("https://registry.example.com", RegistryScopes, t.TempDir(), false, log.New(&out, "", 0)),
+			const baseURL = "https://registry.example.com"
+
+			file := creds.NewFileReadWriter(filepath.Join(dir, creds.CredentialsFileName), jarvisRegistryService+":"+baseURL)
+			if tc.cached {
+				require.NoError(t, file.Write([]byte("value")))
+			}
+
+			var out bytes.Buffer
+
+			cmd := &LogoutCommand{
+				baseUrl:  baseURL,
+				logger:   log.New(&out, "", 0),
+				resolver: NewRegistryTokenResolver(baseURL, RegistryScopes, dir, tc.fileOnly, log.New(&out, "", 0)),
+			}
+			exitCode := -1
+			cmd.exitFunc = func(code int) { exitCode = code }
+
+			err := cmd.Run()
+
+			assert.NoFileExists(t, file.Location())
+
+			if runtime.GOOS == "linux" && !tc.fileOnly {
+				require.NoError(t, err)
+
+				if tc.cached {
+					assert.Equal(t, -1, exitCode)
+					assert.Equal(t, "✓ Logged out of "+baseURL+"\n", out.String())
+				} else {
+					assert.Equal(t, 1, exitCode)
+					assert.Contains(t, out.String(), "✗ Not logged in to "+baseURL)
+				}
+
+				return
+			}
+
+			require.ErrorContains(t, err, "failed to log out of the Registry")
+			assert.Contains(t, err.Error(), "keyring backend unavailable")
+			assert.Equal(t, -1, exitCode)
+			assert.Empty(t, out.String(), "failed cleanup must not print a successful logout or cache miss")
+		})
 	}
-	exitCode := -1
-	cmd.exitFunc = func(code int) { exitCode = code }
-
-	err := cmd.Run()
-	if runtime.GOOS == "linux" {
-		require.NoError(t, err)
-		assert.Equal(t, 1, exitCode)
-
-		return
-	}
-
-	require.ErrorContains(t, err, "failed to log out of the Registry")
-	assert.Contains(t, err.Error(), "keyring backend unavailable")
-	assert.Equal(t, -1, exitCode)
 }

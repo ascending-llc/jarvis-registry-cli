@@ -5,6 +5,7 @@ go 1.24.11
 require (
 	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/alecthomas/kong v1.16.0
+	github.com/cli/browser v1.0.0
 	github.com/cli/oauth v1.2.2
 	github.com/creativeprojects/go-selfupdate v1.5.2
 	github.com/gofrs/flock v0.12.1
@@ -23,7 +24,6 @@ require (
 	github.com/42wim/httpsig v1.2.3 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/cli/browser v1.0.0 // indirect
 	github.com/cli/safeexec v1.0.0 // indirect
 	github.com/clipperhouse/displaywidth v0.10.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.6.0 // indirect

@@ -84,13 +84,26 @@ func TestLoadMissingConfig(t *testing.T) {
 }
 
 func TestLoadPreservesReadErrorBehavior(t *testing.T) {
-	registryDir := filepath.Join(t.TempDir(), "not-a-directory")
-	require.NoError(t, os.WriteFile(registryDir, []byte("not a directory"), 0600))
+	for _, name := range []string{"config.yaml", "config.yml"} {
+		t.Run(name, func(t *testing.T) {
+			registryDir := t.TempDir()
+			path := filepath.Join(registryDir, name)
+			// A directory at the file path fails to read on every supported OS.
+			require.NoError(t, os.Mkdir(path, 0o700))
 
-	_, err := Load(registryDir)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to read config file at "+filepath.Join(registryDir, "config.yaml"))
-	assert.NotContains(t, err.Error(), "failed to resolve config file")
+			_, err := Load(registryDir)
+			require.ErrorContains(t, err, "failed to read config file at "+path)
+			assert.NotContains(t, err.Error(), "failed to resolve config file")
+		})
+	}
+
+	t.Run("invalid parent path", func(t *testing.T) {
+		registryDir := filepath.Join(t.TempDir(), "invalid\x00directory")
+
+		_, err := Load(registryDir)
+		require.ErrorContains(t, err, "failed to read config file at "+filepath.Join(registryDir, "config.yaml"))
+		assert.NotContains(t, err.Error(), "failed to resolve config file")
+	})
 }
 
 func TestLoadInvalid(t *testing.T) {
