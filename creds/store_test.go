@@ -117,6 +117,8 @@ func TestStoreFileOnly(t *testing.T) {
 	content, err = s.Read()
 	require.NoError(t, err)
 	assert.Equal(t, "refreshed", string(content))
+	require.NoError(t, s.Delete())
+	require.ErrorIs(t, s.Delete(), ErrCredentialsNotExist)
 	assert.Empty(t, warnings.String())
 }
 
@@ -131,8 +133,8 @@ func TestStoreDelete(t *testing.T) {
 		{name: "keyring", keyring: true},
 		{name: "file", file: true},
 		{name: "both", file: true, keyring: true},
-		{name: "file-only clears both", file: true, keyring: true, fileOnly: true},
-		{name: "file-only clears old keyring", keyring: true, fileOnly: true},
+		{name: "file-only keeps keyring", file: true, keyring: true, fileOnly: true},
+		{name: "file-only ignores keyring-only entry", keyring: true, fileOnly: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			keyring.MockInit()
@@ -150,7 +152,7 @@ func TestStoreDelete(t *testing.T) {
 			}
 
 			err := s.Delete()
-			if tc.file || tc.keyring {
+			if tc.file || (tc.keyring && !tc.fileOnly) {
 				require.NoError(t, err)
 			} else {
 				require.ErrorIs(t, err, ErrCredentialsNotExist)
@@ -158,9 +160,16 @@ func TestStoreDelete(t *testing.T) {
 
 			_, err = s.file.Read()
 			require.ErrorIs(t, err, ErrCredentialsNotExist)
-			_, err = s.keyring.Read()
-			require.ErrorIs(t, err, ErrCredentialsNotExist)
-			content, err := other.Read()
+
+			content, err := s.keyring.Read()
+			if tc.keyring && tc.fileOnly {
+				require.NoError(t, err, "file-only mode must not touch the keyring")
+				assert.Equal(t, "keyring", string(content))
+			} else {
+				require.ErrorIs(t, err, ErrCredentialsNotExist)
+			}
+
+			content, err = other.Read()
 			require.NoError(t, err)
 			assert.Equal(t, "keep", string(content))
 		})
@@ -195,7 +204,8 @@ func TestStoreDeleteBackendFailure(t *testing.T) {
 				err := s.Delete()
 				assert.NoFileExists(t, s.file.path, "file cleanup still runs on keyring failure")
 
-				if tc.fallback && !tc.fileOnly {
+				// File-only mode never calls the failing keyring; Linux fallback ignores it.
+				if tc.fallback || tc.fileOnly {
 					if cached {
 						require.NoError(t, err)
 					} else {

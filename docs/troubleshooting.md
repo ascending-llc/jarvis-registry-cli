@@ -19,14 +19,14 @@ or an unlocked collection. The CLI automatically falls back to
 entry. Installing `dbus-x11` alone provides no keyring service or unlocked collection.
 
 If keyring access hangs on an unlock prompt, set `local.credentials.file_only: true` in
-`~/.jarvis-registry/config.yaml` to bypass keyring reads and writes. Automatic fallback handles
+`~/.jarvis-registry/config.yaml` to bypass the keyring entirely, including during logout. Automatic fallback handles
 returned errors; it cannot interrupt a hanging call.
 
-Use `jarvis-registry auth logout` to clear local credentials before logging in again. Logout
-attempts both stores, even in file-only mode. Only Linux automatic fallback (`file_only: false`)
-ignores an unavailable keyring during logout, so an inaccessible old keyring entry may remain;
-retry cleanup after restoring keyring access. With `file_only: true`, keyring cleanup failures are
-reported on every OS. Non-Linux systems always report these failures.
+Use `jarvis-registry auth logout` to clear local credentials before logging in again. With
+`file_only: false`, logout attempts both stores. Linux automatic fallback ignores an unavailable
+keyring during logout, so an inaccessible old keyring entry may remain; retry cleanup after
+restoring keyring access. Non-Linux systems report keyring cleanup failures. With
+`file_only: true`, logout removes only the file entry and never calls the keyring.
 
 Credentials file parse and permission errors are reported without overwriting the file. If an
 operation reports that the credentials lock is in use, retry after the other CLI operation ends.

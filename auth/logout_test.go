@@ -83,7 +83,8 @@ func TestAuthCommandLifecycle(t *testing.T) {
 
 			assert.Contains(t, out.String(), "✓ Logged in ("+location+")")
 
-			// File-only logout also removes a stale keyring entry.
+			// Linux fallback logout also removes a stale keyring entry; file-only
+			// logout never touches the keyring, so the entry survives.
 			if mode != "keyring" {
 				keyring.MockInit()
 				require.NoError(t, keyring.Set(jarvisRegistryService+":"+ts.URL, jarvisRegistryCli, "stale"))
@@ -102,6 +103,15 @@ func TestAuthCommandLifecycle(t *testing.T) {
 
 			_, err = logout.resolver.creds.Read()
 			require.ErrorIs(t, err, creds.ErrCredentialsNotExist)
+
+			stale, err := keyring.Get(jarvisRegistryService+":"+ts.URL, jarvisRegistryCli)
+			if mode == "file only" {
+				require.NoError(t, err)
+				assert.Equal(t, "stale", stale)
+			} else {
+				require.ErrorIs(t, err, keyring.ErrNotFound)
+			}
+
 			require.NoError(t, status.Run())
 			assert.Equal(t, 1, statusExit)
 
@@ -150,7 +160,8 @@ func TestLogoutCommandBackendFailure(t *testing.T) {
 
 			assert.NoFileExists(t, file.Location())
 
-			if runtime.GOOS == "linux" && !tc.fileOnly {
+			// File-only mode never calls the failing keyring; Linux fallback ignores it.
+			if runtime.GOOS == "linux" || tc.fileOnly {
 				require.NoError(t, err)
 
 				if tc.cached {

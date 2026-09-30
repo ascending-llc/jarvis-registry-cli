@@ -287,7 +287,8 @@ func (r RegistryTokenResolver) refreshFlow(refreshToken string, st *StoredTokens
 	return nil
 }
 
-// Logout removes cached Registry credentials from every credential store.
+// Logout removes cached Registry credentials from every credential store in
+// use (only the file in file-only mode).
 // The next Login runs the OAuth device flow. No server-side tokens are revoked.
 func (r RegistryTokenResolver) Logout() error {
 	if err := r.creds.Delete(); err != nil {

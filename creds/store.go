@@ -24,7 +24,7 @@ type Store struct {
 const CredentialsFileName = "credentials.json"
 
 // NewStore returns the CLI's credential store for service and user.
-// fileOnly bypasses the keyring for reads and writes on every OS.
+// fileOnly bypasses the keyring entirely on every OS.
 func NewStore(service, user, registryDir string, fileOnly bool) Store {
 	return Store{
 		keyring:  NewReadWriter(service, user),
@@ -82,10 +82,15 @@ func (s Store) Write(content []byte) error {
 	return nil
 }
 
-// Delete attempts both stores even if one fails, including in file-only mode.
-// Only Linux automatic fallback ignores unavailable keyrings; file-only mode reports errors.
+// Delete removes the file entry and, unless fileOnly, the keyring entry.
+// File-only mode never touches the keyring. Otherwise both stores are attempted
+// even if one fails; only Linux automatic fallback ignores unavailable keyrings.
 func (s Store) Delete() error {
 	fileErr := s.file.Delete()
+	if s.fileOnly {
+		return fileErr
+	}
+
 	keyringErr := s.keyring.Delete()
 
 	var failures []error
@@ -93,7 +98,7 @@ func (s Store) Delete() error {
 		failures = append(failures, fileErr)
 	}
 
-	if keyringErr != nil && !errors.Is(keyringErr, ErrCredentialsNotExist) && (!s.fallback || s.fileOnly) {
+	if keyringErr != nil && !errors.Is(keyringErr, ErrCredentialsNotExist) && !s.fallback {
 		failures = append(failures, keyringErr)
 	}
 

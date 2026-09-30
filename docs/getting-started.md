@@ -22,7 +22,7 @@ so it can be used in scripts. macOS and Windows use the keyring by default; auto
 is Linux-only.
 
 Run `jarvis-registry auth logout` to remove the configured auth server's cached credentials from
-both stores. Other servers' entries are preserved. This clears local credentials; it does not
+both stores (only the file in file-only mode). Other servers' entries are preserved. This clears local credentials; it does not
 revoke server-side tokens or end browser SSO sessions. Logout exits with status `1` when no
 credentials are cached. A subsequent login retries the keyring unless file-only mode is enabled.
 
@@ -34,8 +34,8 @@ local:
     file_only: true
 ```
 
-This setting bypasses keyring reads and writes without a warning. Logout still attempts keyring
-cleanup and reports cleanup failures on every OS. Use YAML `true` or `false`, not quoted strings
+This setting bypasses the keyring entirely, without a warning: logins, token refreshes, and logout
+use only the file. A keyring entry left from before enabling it is not removed. Use YAML `true` or `false`, not quoted strings
 or numbers. `configure` does not prompt for this setting. The file is not encrypted; Unix file
 permissions restrict access to its owner.
 
