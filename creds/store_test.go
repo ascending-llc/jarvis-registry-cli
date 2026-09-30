@@ -246,7 +246,7 @@ func TestStoreFailedFallbackDoesNotWarn(t *testing.T) {
 	keyring.MockInitWithError(errors.New("backend unavailable"))
 
 	s, warnings := newTestStore(t, true, false)
-	// A directory at the lock-file parent prevents persistence after the read miss.
+	// A regular file where the locks directory belongs prevents persistence after the read miss.
 	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(s.file.path), "locks"), nil, 0o600))
 	require.ErrorIs(t, s.Write([]byte("value")), ErrCredentialWriteFailure)
 	assert.NoFileExists(t, s.file.path)
