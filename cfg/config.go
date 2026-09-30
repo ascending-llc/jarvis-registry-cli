@@ -57,6 +57,13 @@ type (
 					Override bool `mapstructure:"override"`
 				} `mapstructure:"link"`
 			} `mapstructure:"skills"`
+
+			// Credentials selects where Registry OAuth credentials are cached.
+			Credentials struct {
+				// FileOnly forces plaintext file storage on every OS. The default
+				// uses the keyring, with automatic file fallback only on Linux.
+				FileOnly bool `mapstructure:"file_only"`
+			} `mapstructure:"credentials"`
 		} `mapstructure:"local"`
 	}
 
@@ -104,7 +111,8 @@ func (m SkillsMode) Valid() bool {
 // into a Config, and validates and resolves its fields — normalizing
 // Registry.BaseUrl and Local.Skills.SkipIds, defaulting Registry.AuthBaseUrl
 // to Registry.BaseUrl when it isn't set, and validating Local.Skills.Mode
-// when it's set. It returns an error if neither file exists, the file
+// when it's set. Credentials.FileOnly must be a YAML boolean when present.
+// It returns an error if neither file exists, the file
 // cannot be parsed, or validation fails.
 func Load(registryDir string) (config Config, err error) {
 	v := viper.New()
@@ -118,6 +126,12 @@ func Load(registryDir string) (config Config, err error) {
 
 	if err = v.ReadInConfig(); err != nil {
 		return config, fmt.Errorf("failed to read config file at %s: %s", path, err.Error())
+	}
+
+	if value, present := v.GetStringMap("local.credentials")["file_only"]; present {
+		if _, ok := value.(bool); !ok {
+			return config, fmt.Errorf("invalid local.credentials.file_only in %s: must be a boolean", path)
+		}
 	}
 
 	if err = v.Unmarshal(&config); err != nil {

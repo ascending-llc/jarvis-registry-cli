@@ -23,7 +23,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ascending-llc/jarvis-registry-cli/auth"
 	"github.com/ascending-llc/jarvis-registry-cli/cfg"
+	"github.com/ascending-llc/jarvis-registry-cli/creds"
 )
 
 type (
@@ -2219,4 +2221,60 @@ func TestSyncCommandRunPersonalScopeRetriesFailedDirectoryReplacement(t *testing
 			assert.Equal(t, linkStatusLinked, findSummaryRow(t, parseMarkdownSummaryRows(t, output.String()), "hello-skill", statusUnchanged)[5])
 		})
 	}
+}
+
+func TestSyncCommandFileCredentials(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /auth/oauth2/token", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "refresh_token", r.FormValue("grant_type"))
+		assert.Equal(t, "old-refresh", r.FormValue("refresh_token"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"refreshed","refresh_token":"new-refresh","scope":"skills-read","token_type":"Bearer"}`))
+	})
+
+	called := false
+	mux.HandleFunc("GET /gateway/api/v1/skills", func(w http.ResponseWriter, r *http.Request) {
+		called = true
+
+		assert.Equal(t, "Bearer refreshed", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"skills":[]}`))
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	var out bytes.Buffer
+
+	cmd := &SyncCommand{}
+	require.NoError(t, cmd.BeforeReset())
+	cmd.userHomeDir = t.TempDir()
+	cmd.ProjectPath = t.TempDir()
+	cmd.logger = log.New(&out, "", 0)
+	cmd.configLoadFunc = func(string) (cfg.Config, error) {
+		var config cfg.Config
+
+		config.Registry.BaseUrl = ts.URL
+		config.Registry.AuthBaseUrl = ts.URL
+		config.Local.Skills.Mode = cfg.SkillsModeCodex
+		config.Local.Credentials.FileOnly = true
+
+		return config, nil
+	}
+	require.NoError(t, cmd.AfterApply())
+	store := creds.NewStore("jarvis-registry:"+ts.URL, "jarvis-registry-cli", cmd.registryDir, true)
+	content, err := json.Marshal(auth.StoredTokens{LastUpdate: time.Now().UTC().Add(-2 * time.Hour), AccessToken: "expired", RefreshToken: "old-refresh"})
+	require.NoError(t, err)
+	require.NoError(t, store.Write(content))
+	require.NoError(t, cmd.Run())
+	assert.True(t, called, "sync must authenticate using the refreshed file credentials")
+
+	content, err = store.Read()
+	require.NoError(t, err)
+
+	var stored auth.StoredTokens
+	require.NoError(t, json.Unmarshal(content, &stored))
+	assert.Equal(t, "refreshed", stored.AccessToken)
+	assert.Equal(t, "new-refresh", stored.RefreshToken)
+	assert.NotContains(t, out.String(), "stored in plaintext")
 }

@@ -33,7 +33,7 @@ func TestNewRegistryTokenResolver(t *testing.T) {
 	logger := log.New(io.Discard, "", 0)
 	scopes := []string{"registry:read", "registry:write"}
 
-	r := NewRegistryTokenResolver("https://registry.example.com/", scopes, logger)
+	r := NewRegistryTokenResolver("https://registry.example.com/", scopes, t.TempDir(), false, logger)
 
 	assert.Equal(t, "https://registry.example.com/auth/oauth2/device/code", r.deviceCodeUrl, "deviceCodeUrl should be the trailing-slash-trimmed baseUrl plus deviceCodePath")
 	assert.Equal(t, "https://registry.example.com/auth/oauth2/token", r.tokenUrl, "tokenUrl should be the trailing-slash-trimmed baseUrl plus tokenPath")
@@ -64,7 +64,7 @@ func TestNewRegistryTokenResolver_CredsScopedToBaseUrl(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			keyring.MockInit()
 
-			r := NewRegistryTokenResolver(c.baseUrl, scopes, logger)
+			r := NewRegistryTokenResolver(c.baseUrl, scopes, t.TempDir(), false, logger)
 
 			require.NoError(t, r.creds.Write([]byte("probe")), "should be able to write through the resolver's creds")
 
@@ -493,7 +493,7 @@ func writeJSONErrorResponse(t *testing.T, w http.ResponseWriter, status int, cod
 	require.NoError(t, err, "should be able to write the mocked error response")
 }
 
-func seedStoredTokens(t *testing.T, rw creds.KeyringReadWriter, st StoredTokens) {
+func seedStoredTokens(t *testing.T, rw credentialStore, st StoredTokens) {
 	t.Helper()
 
 	content, err := json.Marshal(st)
@@ -502,7 +502,7 @@ func seedStoredTokens(t *testing.T, rw creds.KeyringReadWriter, st StoredTokens)
 	require.NoError(t, rw.Write(content), "should be able to seed the mocked keyring with the StoredTokens fixture")
 }
 
-func assertStoredAccessToken(t *testing.T, rw creds.KeyringReadWriter, wantAccessToken string) {
+func assertStoredAccessToken(t *testing.T, rw credentialStore, wantAccessToken string) {
 	t.Helper()
 
 	st := readStoredTokens(t, rw)
@@ -510,7 +510,7 @@ func assertStoredAccessToken(t *testing.T, rw creds.KeyringReadWriter, wantAcces
 	assert.Equal(t, wantAccessToken, st.AccessToken, "the persisted access token should match the one returned by GetAccessToken")
 }
 
-func readStoredTokens(t *testing.T, rw creds.KeyringReadWriter) StoredTokens {
+func readStoredTokens(t *testing.T, rw credentialStore) StoredTokens {
 	t.Helper()
 
 	content, err := rw.Read()
@@ -544,4 +544,21 @@ func mockUserHomeDir(t *testing.T) string {
 	})
 
 	return mockHomeDir
+}
+
+func TestLogout(t *testing.T) {
+	keyring.MockInit()
+
+	r := RegistryTokenResolver{creds: creds.NewReadWriter(testService, testUser)}
+	assert.Equal(t, "keyring", r.CredentialsLocation())
+	require.ErrorIs(t, r.Logout(), ErrNotAuthenticated)
+	require.NoError(t, r.creds.Write([]byte("value")))
+	require.NoError(t, r.Logout())
+	_, err := r.creds.Read()
+	require.ErrorIs(t, err, creds.ErrCredentialsNotExist)
+	keyring.MockInitWithError(errors.New("backend unavailable"))
+
+	err = r.Logout()
+	require.ErrorContains(t, err, "backend unavailable")
+	assert.NotErrorIs(t, err, ErrNotAuthenticated)
 }

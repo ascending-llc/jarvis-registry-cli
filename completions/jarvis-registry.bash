@@ -11,7 +11,7 @@ _jarvis_registry_complete() {
     case "${COMP_WORDS[1]}" in
         auth)
             if [ "$COMP_CWORD" -eq 2 ]; then
-                COMPREPLY=( $(compgen -W "login status -h --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "login status logout -h --help" -- "$cur") )
             else
                 COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
             fi

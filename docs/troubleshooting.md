@@ -7,8 +7,28 @@ after a successful login, check whether the command is running in a restricted s
 agent sandbox, container, or CI environment.
 
 On macOS, a sandboxed Keychain access failure can appear as "not found" rather than "permission
-denied." Retry from an unrestricted terminal. Credentials are stored in the OS keyring and are never
-written to disk in plain text.
+denied." Retry from an unrestricted terminal. Credentials normally use the OS keyring; a Linux
+fallback or explicit `local.credentials.file_only: true` stores them in a plaintext file. Use
+`jarvis-registry auth status` to see the current location.
+
+## OS keyring unavailable on Linux
+
+Containers and minimal WSL2 environments may lack a D-Bus session bus, a Secret Service provider,
+or an unlocked collection. The CLI automatically falls back to
+`~/.jarvis-registry/credentials.json` (mode `0600`) and warns once when creating the service's file
+entry. Installing `dbus-x11` alone provides no keyring service or unlocked collection.
+
+If keyring access hangs on an unlock prompt, set `local.credentials.file_only: true` in
+`~/.jarvis-registry/config.yaml` to bypass keyring reads and writes. Automatic fallback handles
+returned errors; it cannot interrupt a hanging call.
+
+Use `jarvis-registry auth logout` to clear local credentials before logging in again. Logout
+attempts both stores, even in file-only mode. On Linux, an unavailable keyring is ignored during
+logout, so an inaccessible old keyring entry may remain; retry cleanup after restoring keyring
+access. On other OSes, keyring cleanup failures are reported.
+
+Credentials file parse and permission errors are reported without overwriting the file. If an
+operation reports that the credentials lock is in use, retry after the other CLI operation ends.
 
 ## Interactive sync is rejected
 

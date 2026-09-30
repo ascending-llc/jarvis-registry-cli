@@ -120,3 +120,33 @@ func TestLoadInvalid(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadCredentialsFileOnly(t *testing.T) {
+	for _, tc := range []struct {
+		fixture string
+		want    bool
+		invalid bool
+	}{
+		{fixture: "valid-base-url"},
+		{fixture: "valid-credentials-keyring"},
+		{fixture: "valid-credentials-file-only", want: true},
+		{fixture: "invalid-credentials-file-only-string", invalid: true},
+		{fixture: "invalid-credentials-file-only-number", invalid: true},
+		{fixture: "invalid-credentials-file-only-value", invalid: true},
+		{fixture: "invalid-credentials-file-only-null", invalid: true},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			dir := filepath.Join("testdata", tc.fixture)
+
+			config, err := Load(dir)
+			if tc.invalid {
+				require.ErrorContains(t, err, "invalid local.credentials.file_only in "+filepath.Join(dir, "config.yaml"))
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, config.Local.Credentials.FileOnly)
+		})
+	}
+}

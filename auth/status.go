@@ -52,7 +52,7 @@ func (c *StatusCommand) AfterApply() (err error) {
 
 	c.baseUrl = config.Registry.BaseUrl
 	c.authBaseUrl = config.Registry.AuthBaseUrl
-	c.resolver = NewRegistryTokenResolver(c.authBaseUrl, RegistryScopes, c.logger)
+	c.resolver = NewRegistryTokenResolver(c.authBaseUrl, RegistryScopes, c.registryDir, config.Local.Credentials.FileOnly, c.logger)
 
 	return nil
 }
@@ -76,7 +76,7 @@ func (c *StatusCommand) Run() error {
 		return nil
 	}
 
-	c.logger.Println("✓ Logged in (keyring)")
+	c.logger.Printf("✓ Logged in (%s)\n", c.resolver.CredentialsLocation())
 	c.logger.Printf("- Token scopes: %s\n", formatScopes(st.Scope))
 
 	return nil

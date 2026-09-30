@@ -5,6 +5,7 @@ _jarvis-registry_auth() {
     commands=(
         'login:Log in to the Registry.'
         'status:Show Registry authentication status.'
+        'logout:Log out of the Registry.'
     )
     _arguments -C \
         '(-h --help)'{-h,--help}'[Show context-sensitive help.]' \
