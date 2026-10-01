@@ -43,6 +43,42 @@ jobs:
           echo "602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c  $jar" | sha256sum -c -
           echo "JSIGN_JAR=$jar" >> "$GITHUB_ENV"
 
+      - name: Resolve previous tag
+        id: resolve_prev
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 --match 'v*' "${GITHUB_REF_NAME}^" 2>/dev/null || echo "")
+          echo "prev_tag=$PREV_TAG" >> "$GITHUB_OUTPUT"
+          echo "📋 Previous release tag: ${PREV_TAG:-<none>}"
+          echo "📋 New release tag:      $GITHUB_REF_NAME"
+
+      # Best-effort: a Copilot outage, expired PAT or unshared secret must never block
+      # shipping binaries, so failures fall back to GoReleaser's own changelog.
+      - name: Generate release notes with Copilot
+        id: notes
+        if: steps.resolve_prev.outputs.prev_tag != ''
+        uses: github/copilot-release-notes@v1
+        timeout-minutes: 10
+        continue-on-error: true
+        with:
+          base-ref: ${{ steps.resolve_prev.outputs.prev_tag }}
+          head-ref: ${{ github.ref_name }}
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_KEY_PERSONAL }}
+
+      # Pass the notes via env var and file, never inline ${{ }} in run:, so LLM output
+      # containing quotes or `$` can't break or inject into the shell.
+      - name: Prepare release notes file
+        id: notes_file
+        env:
+          RELEASE_NOTES: ${{ steps.notes.outputs['release-notes'] }}
+        run: |
+          if [ -n "$RELEASE_NOTES" ]; then
+            printf '%s\n' "$RELEASE_NOTES" > "$RUNNER_TEMP/release-notes.md"
+            echo "args=--release-notes=$RUNNER_TEMP/release-notes.md" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Copilot release notes unavailable; falling back to GoReleaser's changelog."
+          fi
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
@@ -50,7 +86,7 @@ jobs:
           version: "~> v2"
           # Temporary: skip winget until microsoft/winget-pkgs#439002 (first submission) merges,
           # so releases don't open a duplicate new-package PR. Remove once it's merged.
-          args: release --clean --skip=winget
+          args: release --clean --skip=winget ${{ steps.notes_file.outputs.args }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.GH_COPILOT_KEY }}
