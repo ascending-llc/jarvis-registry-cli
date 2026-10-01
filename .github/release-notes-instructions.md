@@ -1,6 +1,6 @@
 # Jarvis Registry CLI — Release Notes Style Guide
-# This file is read by github/copilot-release-notes@v1 automatically.
-# Drop it at .github/release-notes-instructions.md and the action follows these conventions.
+
+<!-- Read automatically by github/copilot-release-notes@v1 from this path. -->
 
 ## Product context
 The Jarvis Registry CLI (`jarvis-registry`, with `jr` as a shorthand) is the companion
