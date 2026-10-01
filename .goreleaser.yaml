@@ -37,6 +37,9 @@ checksum:
 
 release:
   name_template: "Jarvis Registry CLI {{ .Tag }}"
+  # Overwrite the body the web UI auto-generates (a PR-title list) with the Copilot
+  # notes passed via --release-notes, or GoReleaser's changelog as a fallback.
+  mode: replace
 
 brews:
   - name: jarvis-registry
