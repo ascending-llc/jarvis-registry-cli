@@ -40,7 +40,15 @@ support — not marketing language.
 
 A renamed or removed subcommand or flag, or a changed (renamed, removed, or
 re-interpreted) config key, counts as a ⚠️ Breaking Change: users' scripts and config
-files stop working without edits. State what to change when upgrading.
+files stop working without edits. So does dropping support for an OS or CPU
+architecture: users on it can no longer install or upgrade. State what to change
+when upgrading.
+
+A PR that changes only user-facing guides (`docs/**`, `README.md`) goes under
+🌍 Documentation. `skills/embedded/*.md` files are not documentation: they are
+embedded into the CLI binary and delivered to users' synced skills directories.
+Describe changes to them by their user-visible effect, under the matching
+category rather than 🌍 Documentation.
 
 ## Ordering within each section
 
@@ -60,19 +68,9 @@ Omit these from the output entirely. Decide from the PR title, commit message,
 and changed paths (`git show --stat`) — do **not** inspect the diff just to apply
 a skip rule.
 - Pure whitespace / formatting PRs, as stated by the title or commit message
-- Contributor-only PRs: every changed path is `CLAUDE.md`, `AGENTS.md`,
-  `CONTRIBUTING.md`, `Makefile`, `.golangci.yaml`, `.pre-commit-config.yaml`,
-  a `*_test.go` file, or under `skills/testdata/`. These never reach users.
-  Changes under `.github/workflows/` or `scripts/` are **not** contributor-only:
-  they can change installers, signing, or release artifacts.
-
-User-facing guides — `docs/**` and `README.md` — are **not** skipped. A PR that
-changes only those goes under 🌍 Documentation.
-
-`skills/embedded/*.md` files are neither skipped nor documentation: they are
-embedded into the CLI binary and delivered to users' synced skills directories.
-Describe changes to them by their user-visible effect, under the matching
-category rather than 🌍 Documentation.
+- Dependency-only PRs (Go module or Go toolchain version bumps), unless the PR
+  states a user-visible fix or a platform-support change. Describe those by that
+  effect under the matching category.
 
 ## Investigating PRs (shell tool usage)
 
@@ -91,11 +89,4 @@ allowed `git` tool to inspect commits — but observe these rules:
   more than ~500 changed lines, stick to the stat + commit message and the
   changed file list; do not request the full patch.
 - If after one or two `git` calls you still cannot confidently describe the
-  change, describe it at a higher level in the closest category, or omit it
-  if no user-visible effect is apparent. Do not guess at specifics.
-
-## Release summary
-**Required.** Begin every set of notes with a 2–4 sentence plain-English paragraph
-summarising what this release is about, placed **before any category heading or
-bullet list**. Focus on the most impactful changes, not an exhaustive list. Write the
-opening sentence so it stands on its own as a summary — it may be read out of context.
+  change, flag it as uncertain rather than guessing at specifics.
