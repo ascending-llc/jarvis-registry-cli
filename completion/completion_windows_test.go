@@ -38,13 +38,20 @@ func TestPowerShellCompletion(t *testing.T) {
 		{"auth", "jarvis-registry auth lo", []string{"login", "logout"}},
 		{"skills", "jarvis-registry skills s", []string{"sync", "show"}},
 		{"sync_flags", "jarvis-registry skills sync --", []string{"--help", "--mode", "--interactive"}},
+		{"sync_help_prefix", "jarvis-registry skills sync --h", []string{"--help"}},
+		{"sync_mode_flag", "jarvis-registry skills sync --m", []string{"--mode"}},
+		{"sync_interactive_flag", "jarvis-registry skills sync --i", []string{"--interactive"}},
 		{"mode_values", "jarvis-registry skills sync --mode ", []string{"claude", "codex", "copilot"}},
 		{"mode_prefix", "jarvis-registry skills sync --mode co", []string{"codex", "copilot"}},
 		{"completion_shells", "jarvis-registry completion ", []string{"-h", "--help", "bash", "zsh", "fish", "powershell"}},
 		{"powershell", "jarvis-registry completion p", []string{"powershell"}},
+		{"unknown_shell", "jarvis-registry completion tcsh", []string{}},
 		{"completion_help", "jarvis-registry completion bash --", []string{"--help"}},
 		{"configure_help", "jarvis-registry configure --", []string{"--help"}},
 		{"show_help", "jarvis-registry skills show --", []string{"--help"}},
+		{"completion_help_prefix", "jarvis-registry completion bash --h", []string{"--help"}},
+		{"configure_help_prefix", "jarvis-registry configure --h", []string{"--help"}},
+		{"show_help_prefix", "jarvis-registry skills show --h", []string{"--help"}},
 		{"update_flag", "jarvis-registry update --ch", []string{"--check"}},
 		{"middle_of_word", "jarvis-registry completion p|bad", []string{"powershell"}},
 		{"middle_of_line", "jarvis-registry sk| --help", []string{"skills"}},
@@ -69,6 +76,11 @@ func TestPowerShellCompletion(t *testing.T) {
 
 					for _, test := range tests {
 						t.Run(test.name, func(t *testing.T) {
+							// https://github.com/PowerShell/PowerShell/issues/2912
+							if engine == "powershell.exe" && strings.HasSuffix(test.line, " --") {
+								t.Skip("PowerShell 5.1 does not invoke native completers for bare --")
+							}
+
 							line := strings.Replace(test.line, "|", "", 1)
 
 							cursor := strings.Index(test.line, "|")
@@ -106,7 +118,8 @@ $ErrorActionPreference = 'Stop'
 $inputCase = $env:JARVIS_COMPLETION_INPUT | ConvertFrom-Json
 $ExecutionContext.SessionState.LanguageMode = $env:JARVIS_COMPLETION_LANGUAGE
 Get-Content -LiteralPath $env:JARVIS_COMPLETION_SCRIPT -Raw | Invoke-Expression
-$matches = @((TabExpansion2 -inputScript $inputCase.line -cursorColumn $inputCase.cursor).CompletionMatches.CompletionText)
+$matches = @((TabExpansion2 -inputScript $inputCase.line -cursorColumn $inputCase.cursor).CompletionMatches |
+    ForEach-Object { $_.CompletionText })
 ConvertTo-Json -InputObject $matches -Compress
 `
 

@@ -141,6 +141,10 @@ jarvis-registry completion powershell | Out-String | Invoke-Expression
 Keep `Out-String`: it passes the complete multi-line script to `Invoke-Expression`. The script
 registers both `jarvis-registry` and `jarvis-registry.exe` and supports Constrained Language mode.
 
+Windows PowerShell 5.1 has a [completion engine limitation](https://github.com/PowerShell/PowerShell/issues/2912):
+a bare `--` does not trigger native completion. Type a flag prefix such as `--h`, `--m`, or `--i`
+before pressing Tab. PowerShell 7 supports completion immediately after `--`.
+
 Each command enables completion for the current session only. To load it in future sessions, add
 the same line to `~/.bashrc`, `~/.zshrc` (after `compinit`), or `~/.config/fish/config.fish`.
 For PowerShell, add it to `$PROFILE` if your machine allows profile scripts to run and you control
