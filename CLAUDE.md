@@ -42,7 +42,7 @@ Any change to the CLI surface (new/renamed/removed subcommand or flag) has no ge
 - Prefer `testdata/` fixture files over inline literals for inputs and expected outputs.
 - Once an end-to-end baseline exists, add targeted cases for each subsequent change rather than re-deriving the whole flow.
 - For functional code with few side effects — input in, output out — use comprehensive table-driven and/or testdata-driven coverage. `cfg/config_test.go` is the reference example.
-- Cover happy paths thoroughly, but don't chase a coverage percentage, and don't stub every interface just to force error branches to execute.
+- Cover happy paths thoroughly, but don't chase a coverage percentage. Don't add production abstractions (interfaces, func-typed fields) solely so a test can force an error branch that is rarely hit in actual execution. Test-only stubs of seams that already exist for other reasons (e.g. an `io.Writer` output field) are fine when the behavior they pin down is worth keeping, such as an error-message format.
 
 ## Local dev tooling (required)
 
