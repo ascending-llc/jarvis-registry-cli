@@ -103,6 +103,7 @@ go install github.com/ascending-llc/jarvis-registry-cli/cmd/jarvis-registry@late
 ```
 
 A CLI installed this way always reports `dev` for `jarvis-registry --version`.
+It also includes no completion files; see [Shell completion](#shell-completion).
 
 ## Shell completion
 
