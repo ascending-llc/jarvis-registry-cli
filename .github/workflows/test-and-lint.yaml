@@ -30,6 +30,9 @@ jobs:
       - name: Test authentication, credential storage, and configuration
         run: go test -race ./auth ./creds ./cfg
 
+      - name: Test PowerShell completion on Windows PowerShell and PowerShell 7
+        run: go test -race ./completion
+
       - name: Test junction dependency
         run: go test github.com/nyaosorg/go-windows-junction
 

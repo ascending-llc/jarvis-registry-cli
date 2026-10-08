@@ -1,3 +1,4 @@
-completions/*.bash linguist-language=Bash
-completions/*.zsh linguist-language=Zsh
-completions/*.fish linguist-language=Fish
+completion/*.bash linguist-language=Bash eol=lf
+completion/*.zsh linguist-language=Zsh eol=lf
+completion/*.fish linguist-language=Fish eol=lf
+completion/*.ps1 linguist-language=PowerShell eol=lf

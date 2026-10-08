@@ -27,7 +27,15 @@ archives:
       - README*
       - changelog*
       - CHANGELOG*
-      - completions/*
+      - src: completion/*.bash
+        dst: completions
+        strip_parent: true
+      - src: completion/*.zsh
+        dst: completions
+        strip_parent: true
+      - src: completion/*.fish
+        dst: completions
+        strip_parent: true
     format_overrides:
       - goos: windows
         formats: [zip]

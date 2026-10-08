@@ -17,6 +17,12 @@ _jarvis-registry_auth() {
     fi
 }
 
+_jarvis-registry_completion() {
+    _arguments \
+        '(-h --help)'{-h,--help}'[Show context-sensitive help.]' \
+        '1:shell:(bash zsh fish powershell)'
+}
+
 _jarvis-registry_configure() {
     _arguments \
         '(-h --help)'{-h,--help}'[Show context-sensitive help.]'
@@ -68,6 +74,7 @@ _jarvis-registry() {
     local -a commands
     commands=(
         'auth:Manage Registry authentication.'
+        'completion:Print a shell completion script to stdout.'
         'configure:Interactively configure the CLI, e.g. the Registry base URL.'
         'skills:Manage local skills sync.'
         'update:Download and install the latest release.'
@@ -87,6 +94,7 @@ _jarvis-registry() {
         args)
             case $words[1] in
                 auth) _jarvis-registry_auth ;;
+                completion) _jarvis-registry_completion ;;
                 configure) _jarvis-registry_configure ;;
                 skills) _jarvis-registry_skills ;;
                 update) _jarvis-registry_update ;;
@@ -95,6 +103,10 @@ _jarvis-registry() {
     esac
 }
 
-_jarvis-registry "$@"
+if [ "$funcstack[1]" = "_jarvis-registry" ]; then
+    _jarvis-registry "$@"
+else
+    compdef _jarvis-registry jarvis-registry jr
+fi
 
 # vim: set ft=zsh :

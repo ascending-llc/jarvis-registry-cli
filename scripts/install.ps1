@@ -265,7 +265,8 @@ public static extern IntPtr SendMessageTimeout(
         Assert-Signature $stagedExe
 
         # Install the verified staged copy rather than re-expanding the archive. The archive's
-        # completions\ folder comes along unregistered: PowerShell/CMD completion is out of scope.
+        # completions\ folder (bash/zsh/fish only) comes along unregistered. PowerShell completion
+        # is available via `jarvis-registry completion powershell` instead.
         New-Item -ItemType Directory -Path $installDir -Force | Out-Null
         Copy-Item -Path (Join-Path $stagingDir '*') -Destination $installDir -Recurse -Force
 

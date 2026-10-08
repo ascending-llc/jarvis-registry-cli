@@ -14,7 +14,7 @@ Command structs use `github.com/alecthomas/kong`, which drives them through a th
 
 To add a new subcommand: define a command type (e.g. `mypkg.MyCommand`) implementing the phases above, then register it as a new field with a `cmd:"" name:"<subcommand-name>"` kong tag on the `cli` struct in `cmd/jarvis-registry/main.go`. To group it under an existing family of related subcommands instead (e.g. `auth login` / `auth status`), nest it as a field on that family's own struct (see `Auth` in `main.go`) rather than adding a flat top-level command.
 
-Any change to the CLI surface (new/renamed/removed subcommand or flag) has no generator keeping the three completion scripts under `./completions/` (`jarvis-registry.bash`, `.zsh`, `.fish`) in sync — as part of the same change, edit them directly to match, since they hard-code command and flag names. Similarly, `skills/pluginfiles.go` embeds the three mode-specific `skills/embedded/sync-skills-{claude,codex,copilot}-SKILL.md` files and `plugin.json` into the binary; whenever any of those three SKILL.md files changes, also bump the `syncSkillsVersion` constant in `pluginfiles.go` as part of that same change — it's the only signal that tells already-synced installations to pick up the new content, so a stale version number means the update silently never reaches existing users.
+Any change to the CLI surface (new/renamed/removed subcommand or flag) has no generator keeping the four completion scripts under `./completion/` (`jarvis-registry.bash`, `.zsh`, `.fish`, `.ps1`) in sync — as part of the same change, edit them directly to match, since they hard-code command and flag names. `completion/completion.go` embeds these scripts and the `jr.fish` wrapper into the binary for `jarvis-registry completion`. Similarly, `skills/pluginfiles.go` embeds the three mode-specific `skills/embedded/sync-skills-{claude,codex,copilot}-SKILL.md` files and `plugin.json` into the binary; whenever any of those three SKILL.md files changes, also bump the `syncSkillsVersion` constant in `pluginfiles.go` as part of that same change — it's the only signal that tells already-synced installations to pick up the new content, so a stale version number means the update silently never reaches existing users.
 
 ## Config and auth
 
@@ -26,7 +26,7 @@ Any change to the CLI surface (new/renamed/removed subcommand or flag) has no ge
 - No Go package folders that exist purely for organization. Every top-level Go package owns real
   behavior; `internal/http` is `internal` to keep an implementation detail (a shared, tuned
   `http.Client`) out of the public API, not to "organize" anything. This does not constrain non-Go
-  asset directories such as `completions/` or `scripts/`, which hold generated/distributed files
+  asset directories such as `scripts/`, which hold generated/distributed files
   rather than importable code and are organized however best serves their own purpose.
 - Exported names read naturally with their package qualifier, no stutter (`skills.SyncCommand`, not `skills.SkillsSyncCommand`). Read a new name back as `pkg.TypeName` before committing to it.
 

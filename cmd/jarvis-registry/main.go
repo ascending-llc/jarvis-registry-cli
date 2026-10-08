@@ -5,6 +5,7 @@ import (
 
 	"github.com/ascending-llc/jarvis-registry-cli/auth"
 	"github.com/ascending-llc/jarvis-registry-cli/cfg"
+	"github.com/ascending-llc/jarvis-registry-cli/completion"
 	"github.com/ascending-llc/jarvis-registry-cli/skills"
 	"github.com/ascending-llc/jarvis-registry-cli/update"
 )
@@ -24,7 +25,8 @@ func main() {
 			Status auth.StatusCommand `cmd:"" name:"status" help:"Show Registry authentication status."`
 			Logout auth.LogoutCommand `cmd:"" name:"logout" help:"Log out of the Registry."`
 		} `cmd:"" name:"auth" help:"Manage Registry authentication."`
-		Version kong.VersionFlag `short:"v" help:"Print version and exit."`
+		Completion completion.Command `cmd:"" name:"completion" help:"Print a shell completion script to stdout."`
+		Version    kong.VersionFlag   `short:"v" help:"Print version and exit."`
 	}
 
 	ctx := kong.Parse(
