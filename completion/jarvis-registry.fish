@@ -1,12 +1,22 @@
 complete -c jarvis-registry -f
 
+function __fish_jarvis_registry_using_completion
+    set -l args (string match -v -- '-*' (commandline -opc)[2..])
+    test "$args[1]" = completion
+end
+
 # Root command: subcommands and global flags.
 complete -c jarvis-registry -n '__fish_use_subcommand' -a auth -d 'Manage Registry authentication.'
+complete -c jarvis-registry -n '__fish_use_subcommand' -a completion -d 'Print a shell completion script to stdout.'
 complete -c jarvis-registry -n '__fish_use_subcommand' -a configure -d 'Interactively configure the CLI, e.g. the Registry base URL.'
 complete -c jarvis-registry -n '__fish_use_subcommand' -a skills -d 'Manage local skills sync.'
 complete -c jarvis-registry -n '__fish_use_subcommand' -a update -d 'Download and install the latest release.'
 complete -c jarvis-registry -n '__fish_use_subcommand' -s v -l version -d 'Print version and exit.'
 complete -c jarvis-registry -n '__fish_use_subcommand' -s h -l help -d 'Show context-sensitive help.'
+
+# completion subcommand: shell and help.
+complete -c jarvis-registry -n '__fish_jarvis_registry_using_completion; and not __fish_seen_subcommand_from bash zsh fish powershell' -a 'bash zsh fish powershell'
+complete -c jarvis-registry -n '__fish_jarvis_registry_using_completion' -s h -l help -d 'Show context-sensitive help.'
 
 # update subcommand: check and help.
 complete -c jarvis-registry -n '__fish_seen_subcommand_from update' -l check -d 'Report whether a newer version is available, without installing it.'

@@ -4,7 +4,7 @@ _jarvis_registry_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
-        COMPREPLY=( $(compgen -W "-v --version -h --help auth configure skills update" -- "$cur") )
+        COMPREPLY=( $(compgen -W "-v --version -h --help auth completion configure skills update" -- "$cur") )
         return 0
     fi
 
@@ -12,6 +12,13 @@ _jarvis_registry_complete() {
         auth)
             if [ "$COMP_CWORD" -eq 2 ]; then
                 COMPREPLY=( $(compgen -W "login status logout -h --help" -- "$cur") )
+            else
+                COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+            fi
+            ;;
+        completion)
+            if [ "$COMP_CWORD" -eq 2 ]; then
+                COMPREPLY=( $(compgen -W "bash zsh fish powershell -h --help" -- "$cur") )
             else
                 COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
             fi

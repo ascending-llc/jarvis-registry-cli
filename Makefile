@@ -11,6 +11,10 @@ test:
 	@go test -race ./...
 .PHONY: test
 
+test-completion:
+	@go test -race ./completion
+.PHONY: test-completion
+
 test-update:
 	@go test $(UPDATE_TEST_FLAGS) ./update ./internal/lockfile
 .PHONY: test-update

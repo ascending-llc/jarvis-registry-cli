@@ -12,7 +12,8 @@ brew tap ascending-llc/jarvis
 brew install ascending-llc/jarvis/jarvis-registry
 ```
 
-See [Setup](docs/setup.md) for Windows, Linux, Go toolchain, upgrade, and configuration instructions.
+See [Setup](docs/setup.md) for Windows, Linux, Go toolchain, upgrade, configuration, and
+[shell completion](docs/setup.md#shell-completion) instructions.
 
 ## Updating
 
@@ -76,7 +77,7 @@ links for project-scope commands, skill locations, invocation names, and advance
 
 ## Documentation
 
-- [Setup](docs/setup.md) — install, upgrade, and configure the CLI.
+- [Setup](docs/setup.md) — install, upgrade, and configure the CLI, and enable shell completion.
 - [Getting started](docs/getting-started.md) — integrate with Claude Code, Codex, or GitHub Copilot.
 - [Troubleshooting](docs/troubleshooting.md) — resolve authentication, path, collision, and link issues.
 

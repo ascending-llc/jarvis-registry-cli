@@ -61,6 +61,8 @@ binary builds reputation. This is expected and does not indicate a problem with 
 You can also install an archive manually from the
 [releases page](https://github.com/ascending-llc/jarvis-registry-cli/releases).
 
+For PowerShell tab completion, see [Shell completion](#shell-completion).
+
 ## Linux
 
 The installer supports Linux amd64 (x86_64) and arm64 (aarch64). The default per-user installation
@@ -101,6 +103,54 @@ go install github.com/ascending-llc/jarvis-registry-cli/cmd/jarvis-registry@late
 ```
 
 A CLI installed this way always reports `dev` for `jarvis-registry --version`.
+It also includes no completion files; see [Shell completion](#shell-completion).
+
+## Shell completion
+
+Homebrew and the Linux installer already install completion files. The `completion` command is
+useful for Windows, `go install` users, and anyone who wants completion in the current session.
+It prints a script embedded in the executable; no configuration, login, or network access is needed.
+
+**Bash** (including macOS bash 3.2; no `bash-completion` package is required for this command):
+
+```bash
+eval "$(jarvis-registry completion bash)"
+```
+
+**Zsh**, after `compinit` has run (usually handled by your shell configuration):
+
+```zsh
+source <(jarvis-registry completion zsh)
+```
+
+For a plain zsh session, run `autoload -Uz compinit; compinit` first.
+
+**Fish:**
+
+```fish
+jarvis-registry completion fish | source
+```
+
+The bash, zsh, and fish scripts register both `jarvis-registry` and the `jr` shorthand when available.
+
+**PowerShell** (Windows PowerShell 5.1 or PowerShell 7+):
+
+```powershell
+jarvis-registry completion powershell | Out-String | Invoke-Expression
+```
+
+Keep `Out-String`: it passes the complete multi-line script to `Invoke-Expression`. The script
+registers both `jarvis-registry` and `jarvis-registry.exe` and supports Constrained Language mode.
+
+Windows PowerShell 5.1 has a [completion engine limitation](https://github.com/PowerShell/PowerShell/issues/2912):
+a bare `--` does not trigger native completion. Type a flag prefix such as `--h`, `--m`, or `--i`
+before pressing Tab. PowerShell 7 supports completion immediately after `--`.
+
+Each command enables completion for the current session only. To load it in future sessions, add
+the same line to `~/.bashrc`, `~/.zshrc` (after `compinit`), or `~/.config/fish/config.fish`.
+For PowerShell, add it to `$PROFILE` if your machine allows profile scripts to run and you control
+that file. On managed machines where execution policy blocks profiles or IT manages them centrally,
+run the command in each new session; no profile changes are required.
 
 ## Updating the CLI
 
@@ -147,7 +197,9 @@ Use the upgrade method matching your installation:
 Use your original installer or download a current release once; subsequent upgrades can use
 `jarvis-registry update`.
 
-**Shell completions:** self-update replaces only the executable. To refresh completion files
+**Shell completions:** self-update replaces only the executable. Rerun your shell's
+[completion command](#shell-completion) to load the updated embedded script in the current session;
+a startup-file entry loads the new version in future sessions. To refresh completion files
 previously copied into your shell's configuration directories, rerun the Linux installer or
 copy the completion files from the new release archive, then restart your shell.
 

@@ -95,6 +95,16 @@ linters:
   exclusions:
     generated: lax
     rules:
+      - path: '^completion/completion_test\.go$'
+        linters:
+          - gosec
+        # Expected output comes from the fixed shell asset filenames in the test table.
+        text: 'G304: Potential file inclusion via variable'
+      - path: '^completion/completion_windows_test\.go$'
+        linters:
+          - gosec
+        # Runs the two explicitly selected PowerShell engines with a fixed test harness; inputs use environment variables.
+        text: 'G204: Subprocess launched with variable'
       - path: '^auth/auth\.go$'
         linters:
           - gosec
