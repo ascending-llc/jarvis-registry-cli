@@ -26,39 +26,43 @@ func TestPowerShellCompletion(t *testing.T) {
 	require.NoError(t, os.WriteFile(scriptPath, output.Bytes(), 0600))
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "project space"), 0700))
 
+	// line is the text before the cursor and after is the text following it. path marks cases
+	// whose matches are filesystem paths, compared by base name.
 	tests := []struct {
-		name string
-		line string
-		want []string
+		name  string
+		line  string
+		after string
+		want  []string
+		path  bool
 	}{
-		{"root", "jarvis-registry sk", []string{"skills"}},
-		{"exe", "jarvis-registry.exe sk", []string{"skills"}},
-		{"root_completion", "jarvis-registry comp", []string{"completion"}},
-		{"root_update", "jarvis-registry up", []string{"update"}},
-		{"auth", "jarvis-registry auth lo", []string{"login", "logout"}},
-		{"skills", "jarvis-registry skills s", []string{"sync", "show"}},
-		{"sync_flags", "jarvis-registry skills sync --", []string{"--help", "--mode", "--interactive"}},
-		{"sync_help_prefix", "jarvis-registry skills sync --h", []string{"--help"}},
-		{"sync_mode_flag", "jarvis-registry skills sync --m", []string{"--mode"}},
-		{"sync_interactive_flag", "jarvis-registry skills sync --i", []string{"--interactive"}},
-		{"mode_values", "jarvis-registry skills sync --mode ", []string{"claude", "codex", "copilot"}},
-		{"mode_prefix", "jarvis-registry skills sync --mode co", []string{"codex", "copilot"}},
-		{"completion_shells", "jarvis-registry completion ", []string{"-h", "--help", "bash", "zsh", "fish", "powershell"}},
-		{"powershell", "jarvis-registry completion p", []string{"powershell"}},
-		{"unknown_shell", "jarvis-registry completion tcsh", []string{}},
-		{"completion_help", "jarvis-registry completion bash --", []string{"--help"}},
-		{"configure_help", "jarvis-registry configure --", []string{"--help"}},
-		{"show_help", "jarvis-registry skills show --", []string{"--help"}},
-		{"completion_help_prefix", "jarvis-registry completion bash --h", []string{"--help"}},
-		{"configure_help_prefix", "jarvis-registry configure --h", []string{"--help"}},
-		{"show_help_prefix", "jarvis-registry skills show --h", []string{"--help"}},
-		{"update_flag", "jarvis-registry update --ch", []string{"--check"}},
-		{"middle_of_word", "jarvis-registry completion p|bad", []string{"powershell"}},
-		{"middle_of_line", "jarvis-registry sk| --help", []string{"skills"}},
-		{"middle_mode", "jarvis-registry skills sync --mode co| ./project", []string{"codex", "copilot"}},
-		{"directory", "jarvis-registry skills sync ./proj", []string{"project space"}},
-		{"directory_after_mode", "jarvis-registry skills sync --mode codex ./proj", []string{"project space"}},
-		{"directory_after_separator", "jarvis-registry skills sync -- ./proj", []string{"project space"}},
+		{name: "root", line: "jarvis-registry sk", want: []string{"skills"}},
+		{name: "exe", line: "jarvis-registry.exe sk", want: []string{"skills"}},
+		{name: "root_completion", line: "jarvis-registry comp", want: []string{"completion"}},
+		{name: "root_update", line: "jarvis-registry up", want: []string{"update"}},
+		{name: "auth", line: "jarvis-registry auth lo", want: []string{"login", "logout"}},
+		{name: "skills", line: "jarvis-registry skills s", want: []string{"sync", "show"}},
+		{name: "sync_flags", line: "jarvis-registry skills sync --", want: []string{"--help", "--mode", "--interactive"}},
+		{name: "sync_help_prefix", line: "jarvis-registry skills sync --h", want: []string{"--help"}},
+		{name: "sync_mode_flag", line: "jarvis-registry skills sync --m", want: []string{"--mode"}},
+		{name: "sync_interactive_flag", line: "jarvis-registry skills sync --i", want: []string{"--interactive"}},
+		{name: "mode_values", line: "jarvis-registry skills sync --mode ", want: []string{"claude", "codex", "copilot"}},
+		{name: "mode_prefix", line: "jarvis-registry skills sync --mode co", want: []string{"codex", "copilot"}},
+		{name: "completion_shells", line: "jarvis-registry completion ", want: []string{"-h", "--help", "bash", "zsh", "fish", "powershell"}},
+		{name: "powershell", line: "jarvis-registry completion p", want: []string{"powershell"}},
+		{name: "unknown_shell", line: "jarvis-registry completion tcsh", want: []string{}},
+		{name: "completion_help", line: "jarvis-registry completion bash --", want: []string{"--help"}},
+		{name: "configure_help", line: "jarvis-registry configure --", want: []string{"--help"}},
+		{name: "show_help", line: "jarvis-registry skills show --", want: []string{"--help"}},
+		{name: "completion_help_prefix", line: "jarvis-registry completion bash --h", want: []string{"--help"}},
+		{name: "configure_help_prefix", line: "jarvis-registry configure --h", want: []string{"--help"}},
+		{name: "show_help_prefix", line: "jarvis-registry skills show --h", want: []string{"--help"}},
+		{name: "update_flag", line: "jarvis-registry update --ch", want: []string{"--check"}},
+		{name: "middle_of_word", line: "jarvis-registry completion p", after: "bad", want: []string{"powershell"}},
+		{name: "middle_of_line", line: "jarvis-registry sk", after: " --help", want: []string{"skills"}},
+		{name: "middle_mode", line: "jarvis-registry skills sync --mode co", after: " ./project", want: []string{"codex", "copilot"}},
+		{name: "directory", line: "jarvis-registry skills sync ./proj", want: []string{"project space"}, path: true},
+		{name: "directory_after_mode", line: "jarvis-registry skills sync --mode codex ./proj", want: []string{"project space"}, path: true},
+		{name: "directory_after_separator", line: "jarvis-registry skills sync -- ./proj", want: []string{"project space"}, path: true},
 	}
 
 	for _, engine := range []string{"powershell.exe", "pwsh.exe"} {
@@ -81,15 +85,8 @@ func TestPowerShellCompletion(t *testing.T) {
 								t.Skip("PowerShell 5.1 does not invoke native completers for bare --")
 							}
 
-							line := strings.Replace(test.line, "|", "", 1)
-
-							cursor := strings.Index(test.line, "|")
-							if cursor < 0 {
-								cursor = len(line)
-							}
-
-							matches := powerShellCompletions(t, engine, mode, scriptPath, line, cursor)
-							if strings.HasPrefix(test.name, "directory") {
+							matches := powerShellCompletions(t, engine, mode, scriptPath, test.line+test.after, len(test.line))
+							if test.path {
 								for i, match := range matches {
 									matches[i] = filepath.Base(strings.TrimRight(strings.Trim(match, "'\""), `/\`))
 								}
