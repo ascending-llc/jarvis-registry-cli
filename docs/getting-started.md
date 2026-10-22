@@ -50,6 +50,26 @@ jarvis-registry skills sync --mode claude
 Personal skills are stored under `~/.claude/skills/jarvis-registry/` and invoked as
 `jarvis-registry:<skill-name>`.
 
+The same sync also delivers the Jarvis Registry MCP connection in the plugin's
+`.claude-plugin/plugin.json`. The MCP URL uses `registry.base_url` plus
+`/gateway/proxy/mcpgw/mcp`. For Claude mode, configure an origin such as
+`https://registry.acme.example.com`, optionally with a trailing slash; credentials,
+paths, query strings, and fragments are rejected before login or file changes.
+
+After the first sync, or whenever the plugin definition changes, reload the plugin or start a new
+Claude Code session. Open `/mcp`, select the Registry connection, and complete its OAuth login if
+prompted. This authentication is separate from `jarvis-registry auth login`, which grants the CLI
+access to skills. The generated plugin contains the URL, never CLI access or refresh tokens.
+
+For a controlled loading check, launch Claude Code with the generated plugin root:
+
+```sh
+claude --plugin-dir ~/.claude/skills/jarvis-registry
+```
+
+Confirm that `/mcp` shows the connection and ask Claude to discover an available Registry capability.
+Successful skills sync alone does not confirm that MCP authentication or plugin loading succeeded.
+
 To sync only for a project, pass its path:
 
 ```sh
@@ -57,6 +77,30 @@ jarvis-registry skills sync --mode claude .
 ```
 
 Project skills are stored under `<path>/.claude/skills/jarvis-registry/`.
+
+Open Claude Code in that project and complete any workspace trust or MCP approval requested by the
+client. If you also synced a personal `jarvis-registry` plugin, Claude Code gives that personal copy
+precedence over the same-named project copy. To select the project's Registry connection in that
+case, launch Claude Code with the project plugin explicitly:
+
+```sh
+claude --plugin-dir ./.claude/skills/jarvis-registry
+```
+
+Check the loaded plugin's source in `/plugin` and its actual Registry URL in `/mcp` before using it.
+A new session alone does not make the project copy override the personal copy. Managed plugin
+settings can also take precedence over `--plugin-dir`; see
+[Claude Code's name-conflict rules](https://code.claude.com/docs/en/plugins/loading#name-conflicts).
+
+Changing `registry.base_url` and syncing an existing plugin updates its MCP URL and prints reload
+guidance. An unchanged plugin is not rewritten. If a later skills download fails, the command still
+reports the failure; any plugin update already completed retains its reload notice.
+
+Existing manually configured MCP connections remain untouched. If the same Registry appears twice,
+first verify the plugin-provided connection, then disable the old manual entry using Claude Code's
+MCP settings. Use the tool names shown by the client; plugin namespaces can differ from manual entries.
+See [Claude Code's plugin MCP documentation](https://code.claude.com/docs/en/mcp#plugin-provided-mcp-servers)
+for client loading and policy details.
 
 ## Codex
 
