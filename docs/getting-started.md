@@ -41,6 +41,9 @@ permissions restrict access to its owner.
 
 ## Claude Code
 
+Automatic loading of plugins from skills directories requires Claude Code v2.1.157 or later.
+See the [Claude Code release notes](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21157).
+
 Sync skills for use across all Claude Code projects:
 
 ```sh
