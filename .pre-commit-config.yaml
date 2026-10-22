@@ -1,3 +1,6 @@
+default_language_version:
+  python: python3.14
+
 repos:
   - repo: https://github.com/golangci/golangci-lint
     rev: v2.13.2
