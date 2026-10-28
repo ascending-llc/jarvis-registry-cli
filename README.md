@@ -60,6 +60,10 @@ Then choose your integration:
 jarvis-registry skills sync --mode claude
 ```
 
+This also installs the Registry MCP connection in the Claude Code plugin. Reload the plugin or start
+a new session when prompted, then complete the separate Registry MCP OAuth login through `/mcp`.
+See the [Claude Code setup guide](docs/getting-started.md#claude-code) for loading and verification.
+
 ### [Codex](docs/getting-started.md#codex)
 
 ```sh
