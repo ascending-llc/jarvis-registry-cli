@@ -54,7 +54,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.x"
 
       - name: Install pre-commit
         run: pip install pre-commit
@@ -68,8 +68,6 @@ jobs:
       - name: Run unit test
         run: make test
 
+      # gelato scans only staged changes, of which CI has none.
       - name: Lint
-        run: make lint
-
-      - name: Scan for secrets
-        run: make tartufo
+        run: SKIP=gelato make lint-all
