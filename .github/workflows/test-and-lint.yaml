@@ -71,5 +71,6 @@ jobs:
       - name: Lint
         run: make lint
 
+      # The shallow checkout is a single commit, so this scans every line of the tree.
       - name: Scan for secrets
-        run: make tartufo
+        run: make gelato

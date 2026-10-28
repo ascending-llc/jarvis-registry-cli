@@ -49,8 +49,8 @@ Any change to the CLI surface (new/renamed/removed subcommand or flag) has no ge
 - Run `pre-commit install -t pre-commit` before contributing.
 - Use the `Makefile` targets rather than calling `go test` / `golangci-lint` / etc. directly — `make all` (test + lint) is the default target and the bar for a change being done.
 - `golangci-lint` must pass. Suppress a false positive case-by-case in `.golangci.yaml` under `linters.exclusions.rules`, scoped to the specific `path` and `text`, with a comment explaining why — never a blanket `//nolint` or a disabled linter. Exception: `govet`'s `fieldalignment` check emits a diagnostic whose text encodes struct-specific byte-count arithmetic, so it can't be pinned to a stable `text:` regex the way other findings can — suppress it with an inline, linter-scoped `//nolint:govet // fieldalignment: ...` comment on the struct instead, explaining why the field order is intentional.
-- `tartufo` does secret scanning; exclude false positives via `tartufo.toml`, not by skipping the hook.
-- Coding agents: never invoke tartufo yourself (`make tartufo`, `make lint-all`, or a raw `pre-commit run ... tartufo`) — a hit's ANSI-highlighted snippet won't render in a captured-stdout session, and even a clean run floods context for no benefit. The git hook and CI already enforce this.
+- `gelato` does secret scanning; exclude false positives via `tartufo.toml` (gelato reads tartufo's config format), not by skipping the hook.
+- Coding agents: never invoke gelato yourself (`make gelato`, `make lint-all`, or a raw `pre-commit run ... gelato`) — it floods context for no benefit. The git hook and CI already enforce this.
 - Import grouping and other style rules are auto-fixed by the lint/format tooling — run `make fmt` (or let pre-commit do it) rather than hand-arranging imports.
 
 ## Error handling

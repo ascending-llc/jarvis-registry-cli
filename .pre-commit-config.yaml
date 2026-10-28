@@ -9,7 +9,13 @@ repos:
       - id: golangci-lint-fmt
       - id: golangci-lint-full
 
-  - repo: https://github.com/godaddy/tartufo
-    rev: v6.0.0
+  - repo: https://github.com/satoseino/gelato
+    rev: v0.1.0
     hooks:
-      - id: tartufo
+      - id: gelato
+      # `make gelato`: scan the history instead of staged changes. Not run on commit.
+      - id: gelato
+        alias: gelato-scan
+        name: gelato scan
+        args: [scan]
+        stages: [manual]
