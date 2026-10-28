@@ -47,6 +47,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Go
+        id: setup-go
         uses: actions/setup-go@v5
         with:
           go-version: "^1.24.1"
@@ -59,11 +60,13 @@ jobs:
       - name: Install pre-commit
         run: pip install pre-commit
 
+      # golangci-lint is built from source with the installed Go and refuses to run
+      # when that Go is older than go.mod targets, so key on the Go version too.
       - name: Cache pre-commit environments
         uses: actions/cache@v4
         with:
           path: ~/.cache/pre-commit
-          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+          key: pre-commit-${{ runner.os }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
 
       - name: Run unit test
         run: make test
