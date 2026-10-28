@@ -68,9 +68,6 @@ jobs:
       - name: Run unit test
         run: make test
 
+      # gelato scans only staged changes, of which CI has none.
       - name: Lint
-        run: make lint
-
-      # The shallow checkout is a single commit, so this scans every line of the tree.
-      - name: Scan for secrets
-        run: make gelato
+        run: SKIP=gelato make lint-all

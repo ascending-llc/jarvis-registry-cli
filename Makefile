@@ -51,9 +51,5 @@ lint-all:
 	@pre-commit run --all-files
 .PHONY: lint-all
 
-gelato:
-	@pre-commit run --all-files --hook-stage manual gelato-scan
-.PHONY: gelato
-
 all: test lint
 .PHONY: all

@@ -10,9 +10,3 @@ repos:
     rev: v0.1.0
     hooks:
       - id: gelato
-      # `make gelato`: scan the history instead of staged changes. Not run on commit.
-      - id: gelato
-        alias: gelato-scan
-        name: gelato scan
-        args: [scan]
-        stages: [manual]
