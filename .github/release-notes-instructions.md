@@ -32,15 +32,16 @@ support — not marketing language.
   than no specific.
 
 ## Categories (use these headings in order, omit empty ones)
-1. ⚠️ Breaking Changes & Upgrade Notes  ← always first if present
+1. ⚠️ Breaking Changes & Upgrade Notes
 2. ✨ Features
 3. 🐛 Bug Fixes
 4. 🔧 Refactoring & Performance
 5. 🌍 Documentation
 
-Set each entry's `tag` to the exact heading text above. The action renders the
-headings in the order their tags first appear in `entries`, so emit `entries`
-grouped by category, in the order listed above.
+Set each entry's `tag` to one heading exactly as written above, without the
+list number (for example, `✨ Features`). The action renders the headings in
+the order their tags first appear in `entries`, so emit `entries` grouped by
+category, in the order listed above: breaking changes always come first.
 
 A renamed or removed subcommand or flag, or a changed (renamed, removed, or
 re-interpreted) config key, counts as a ⚠️ Breaking Change: users' scripts and config
