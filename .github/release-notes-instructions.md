@@ -38,6 +38,10 @@ support — not marketing language.
 4. 🔧 Refactoring & Performance
 5. 🌍 Documentation
 
+Set each entry's `tag` to the exact heading text above. The action renders the
+headings in the order their tags first appear in `entries`, so emit `entries`
+grouped by category, in the order listed above.
+
 A renamed or removed subcommand or flag, or a changed (renamed, removed, or
 re-interpreted) config key, counts as a ⚠️ Breaking Change: users' scripts and config
 files stop working without edits. So does dropping support for an OS or CPU
