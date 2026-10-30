@@ -80,6 +80,7 @@ links for project-scope commands, skill locations, invocation names, and advance
 - [Setup](docs/setup.md) — install, upgrade, and configure the CLI, and enable shell completion.
 - [Getting started](docs/getting-started.md) — integrate with Claude Code, Codex, or GitHub Copilot.
 - [Troubleshooting](docs/troubleshooting.md) — resolve authentication, path, collision, and link issues.
+- [Privacy policy](PRIVACY.md) — what the CLI sends over the network and stores on your device.
 
 Run `jarvis-registry --help` or `jarvis-registry <command> --help` for the full command and flag
 reference.
