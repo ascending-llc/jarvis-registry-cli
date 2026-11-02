@@ -16,5 +16,7 @@ exclude-entropy-patterns = [
 ]
 
 exclude-signatures = [
-    # {signature = "hash value", reason = "false positive of high entropy in <***>"},
+    {signature = "1a69820961db4e145e71c398e069023feda97a54014f717d5ea80bd472932c64", reason = "Fake malformed URL password in skills credential-redaction regression test"},
+    {signature = "e06f475ddc160d8af612801b9b7fc114bc9946388696a9a00f209233a434342a", reason = "Fake URL password in cfg credential-redaction regression test"},
+    {signature = "0ca3348ec5df3d504e5b6f6c1c7c888821680398798990f76dffbf633ebed184", reason = "Fake URL password in skills unsafe-origin rejection test"},
 ]

@@ -134,6 +134,32 @@ func TestLoadInvalid(t *testing.T) {
 	}
 }
 
+func TestLoadMalformedURLDoesNotExposeCredentials(t *testing.T) {
+	const privateURL = "https://private-user:private-password@%zz"
+
+	for _, field := range []string{"base_url", "auth_base_url"} {
+		t.Run(field, func(t *testing.T) {
+			registryDir := t.TempDir()
+			path := filepath.Join(registryDir, "config.yaml")
+
+			content := "registry:\n"
+			if field == "auth_base_url" {
+				content += "  base_url: https://registry.example.com\n"
+			}
+
+			content += "  " + field + ": \"" + privateURL + "\"\n"
+			require.NoError(t, os.WriteFile(path, []byte(content), 0600))
+
+			_, err := Load(registryDir)
+			require.Error(t, err)
+			assert.Equal(t, "invalid registry."+field+" in "+path+": not a valid URL", err.Error())
+			assert.NotContains(t, err.Error(), privateURL)
+			assert.NotContains(t, err.Error(), "private-user")
+			assert.NotContains(t, err.Error(), "private-password")
+		})
+	}
+}
+
 func TestLoadCredentialsFileOnly(t *testing.T) {
 	for _, tc := range []struct {
 		fixture string

@@ -30,6 +30,10 @@ import (
 
 type (
 	MockTokenProvider struct{}
+
+	countingTokenProvider struct {
+		calls int
+	}
 )
 
 const (
@@ -38,6 +42,12 @@ const (
 
 func (tp MockTokenProvider) GetAccessToken() (string, error) {
 	return mockBearerToken, nil
+}
+
+func (tp *countingTokenProvider) GetAccessToken() (string, error) {
+	tp.calls++
+
+	return "", errors.New("unexpected token lookup in invalid-origin test")
 }
 
 func TestIsSafeSkillName(t *testing.T) {
@@ -1211,7 +1221,7 @@ func TestSyncCommandRunUserSkipList(t *testing.T) {
 		err := cmd.Run()
 		require.NoError(t, err, "Run should succeed when an available skill is configured to be skipped")
 		assert.False(t, *contentRequested, "get_skill_content should never be requested for a configured skip")
-		assert.Empty(t, stderr.String(), "a matched skip id should not produce an unmatched warning")
+		assert.NotContains(t, stderr.String(), "don't match any skill", "a matched skip id should not produce an unmatched warning")
 
 		_, statErr := os.Stat(filepath.Join(mockSkillsDir, name))
 		assert.True(t, errors.Is(statErr, fs.ErrNotExist), "a configured skip should not be created locally")
@@ -1286,7 +1296,7 @@ func TestSyncCommandRunUserSkipList(t *testing.T) {
 		err := cmd.Run()
 		require.NoError(t, err, "Run should succeed when a configured skip is also technically unsyncable")
 		assert.False(t, *contentRequested, "a chat-owned multi-file skill should never have its content requested")
-		assert.Empty(t, stderr.String(), "a configured id matching a chat-owned skip should not be reported as unmatched")
+		assert.NotContains(t, stderr.String(), "don't match any skill", "a configured id matching a chat-owned skip should not be reported as unmatched")
 
 		rows := parseMarkdownSummaryRows(t, stdout.String())
 		assertSummaryRow(t, rows, name, statusSkipped, "-", "2", chatOwnedFilesSkippedNote)
@@ -1403,6 +1413,176 @@ func TestSyncCommandRunFirstTimeBanner(t *testing.T) {
 	require.NoError(t, err, "Run should succeed again now that the plugin root exists")
 
 	assert.NotContains(t, buf.String(), "First time skill sync", "the banner should not print once plugin.json already exists and matches")
+}
+
+func TestSyncCommandRunDeliversPluginMCP(t *testing.T) {
+	ts, _ := newSingleSkillTestServer(t, "plugin-1", "test-skill", 1, Content{Description: "A test skill", Body: "Some body.\n"}, false)
+
+	for _, scope := range []string{"personal", "project"} {
+		for _, suffix := range []string{"", "/"} {
+			t.Run(scope+"/origin"+suffix, func(t *testing.T) {
+				cmd, _, _ := newTestSyncSetup(t, ts)
+				if scope == "personal" {
+					cmd.ProjectPath = ""
+					require.NoError(t, cmd.AfterApply())
+					cmd.tp = MockTokenProvider{}
+				}
+
+				cmd.baseUrl = ts.URL + suffix
+				cmd.authBaseUrl = "https://auth.example.com"
+
+				var notices bytes.Buffer
+
+				cmd.stderrLogger = log.New(&notices, "", 0)
+				require.NoError(t, cmd.Run())
+
+				actual := assertPluginMCPManifest(t, cmd.syncRoot, ts.URL)
+				assert.NotContains(t, string(actual), mockBearerToken)
+				assert.NotContains(t, string(actual), cmd.authBaseUrl)
+				assert.Contains(t, notices.String(), "Reload the plugin or start a new Claude Code session")
+				assert.Contains(t, notices.String(), "MCP OAuth")
+				assert.Contains(t, notices.String(), cmd.syncRoot)
+				assert.FileExists(t, filepath.Join(cmd.destDir, reservedSyncSkillsName, "SKILL.md"))
+			})
+		}
+	}
+}
+
+func TestSyncCommandRunReconcilesPluginMCP(t *testing.T) {
+	ts, _ := newSingleSkillTestServer(t, "plugin-1", "test-skill", 1, Content{Description: "A test skill", Body: "Some body.\n"}, false)
+	other, _ := newSingleSkillTestServer(t, "plugin-1", "test-skill", 1, Content{Description: "A test skill", Body: "Some body.\n"}, false)
+	cmd, destDir, _ := newTestSyncSetup(t, ts)
+	bootstrapPluginRoot(t, cmd.syncRoot, destDir)
+
+	var notices, summary bytes.Buffer
+
+	cmd.stderrLogger = log.New(&notices, "", 0)
+	cmd.logger = log.New(&summary, "", 0)
+	require.NoError(t, cmd.Run(), "an existing skills-only plugin should upgrade")
+	first := assertPluginMCPManifest(t, cmd.syncRoot, ts.URL)
+	assert.Contains(t, notices.String(), "Reload the plugin")
+	assert.NotContains(t, summary.String(), "First time skill sync")
+
+	path := filepath.Join(cmd.syncRoot, ".claude-plugin", "plugin.json")
+	oldTime := time.Unix(1_700_000_000, 0)
+	require.NoError(t, os.Chtimes(path, oldTime, oldTime))
+	notices.Reset()
+
+	require.NoError(t, cmd.Run())
+	assert.Equal(t, first, assertPluginMCPManifest(t, cmd.syncRoot, ts.URL))
+
+	stat, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, oldTime.Unix(), stat.ModTime().Unix(), "identical manifests must not be rewritten")
+	assert.NotContains(t, notices.String(), "Reload the plugin")
+
+	cmd.baseUrl = other.URL
+	require.NoError(t, cmd.Run(), "changing the Registry origin should update its connection")
+	assertPluginMCPManifest(t, cmd.syncRoot, other.URL)
+	assert.Contains(t, notices.String(), "Reload the plugin")
+	assert.Contains(t, notices.String(), "MCP OAuth")
+}
+
+func TestSyncCommandRunRejectsUnsafePluginOrigin(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("invalid origins must fail before Registry HTTP requests")
+	}))
+	t.Cleanup(ts.Close)
+
+	for _, origin := range []string{
+		"", "not-a-url", "https://", "https://user:private-value@example.com",
+		"https://user@example.com", "https://example.com/gateway", "https://example.com//",
+		"https://example.com/%2F", "https://example.com?secret=private-value", "https://example.com?",
+		"https://example.com#private-value", "https://example.com#", "https://user:private-value@%zz",
+		"http://example.com", "ftp://example.com",
+	} {
+		t.Run(origin, func(t *testing.T) {
+			cmd, _, registryDir := newTestSyncSetup(t, ts)
+			cmd.baseUrl = origin
+			tp := &countingTokenProvider{}
+			cmd.tp = tp
+
+			var output bytes.Buffer
+
+			cmd.logger = log.New(&output, "", 0)
+			cmd.stderrLogger = log.New(&output, "", 0)
+			err := cmd.Run()
+			require.ErrorContains(t, err, "registry.base_url")
+			assert.Zero(t, tp.calls, "invalid plugin origins must fail before token lookup")
+			assert.NotContains(t, err.Error(), "private-value", "errors must not echo URL credentials")
+
+			if origin != "" {
+				assert.NotContains(t, err.Error(), origin)
+			}
+
+			assert.Empty(t, output.String())
+			assert.NoDirExists(t, cmd.syncRoot)
+
+			entries, readErr := os.ReadDir(registryDir)
+			require.NoError(t, readErr)
+			assert.Empty(t, entries, "invalid origins must fail before lock files or other writes")
+		})
+	}
+}
+
+func TestSyncCommandRunPluginNoticeSurvivesSkillsFailure(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "Registry temporarily unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(ts.Close)
+	cmd, _, _ := newTestSyncSetup(t, ts)
+
+	var notices bytes.Buffer
+
+	cmd.stderrLogger = log.New(&notices, "", 0)
+	require.Error(t, cmd.Run(), "the later skills error must still fail the command")
+	assertPluginMCPManifest(t, cmd.syncRoot, ts.URL)
+	assert.Contains(t, notices.String(), "Reload the plugin")
+	assert.Contains(t, notices.String(), "MCP OAuth")
+}
+
+func TestSyncCommandRunPluginOwnershipAndWriteFailure(t *testing.T) {
+	ts, _ := newSingleSkillTestServer(t, "plugin-1", "test-skill", 1, Content{Description: "A test skill", Body: "Some body.\n"}, false)
+
+	t.Run("foreign root stays untouched", func(t *testing.T) {
+		cmd, _, _ := newTestSyncSetup(t, ts)
+		cmd.isTerminal = func() bool { return false }
+		path := filepath.Join(cmd.syncRoot, ".claude-plugin", "plugin.json")
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0755))
+		require.NoError(t, os.WriteFile(path, pluginManifestContent, 0644))
+		require.ErrorContains(t, cmd.Run(), "Refusing to modify it non-interactively")
+
+		actual, err := os.ReadFile(path)
+		require.NoError(t, err)
+		assert.Equal(t, pluginManifestContent, actual)
+	})
+
+	t.Run("unreadable manifest has no delivery notice", func(t *testing.T) {
+		cmd, destDir, _ := newTestSyncSetup(t, ts)
+		bootstrapPluginRoot(t, cmd.syncRoot, destDir)
+		path := filepath.Join(cmd.syncRoot, ".claude-plugin", "plugin.json")
+		require.NoError(t, os.Remove(path))
+		require.NoError(t, os.Mkdir(path, 0755))
+
+		var notices bytes.Buffer
+
+		cmd.stderrLogger = log.New(&notices, "", 0)
+		require.Error(t, cmd.Run())
+		assert.NotContains(t, notices.String(), "Reload the plugin")
+		assert.DirExists(t, path)
+	})
+}
+
+func assertPluginMCPManifest(t *testing.T, pluginRoot, origin string) []byte {
+	t.Helper()
+
+	actual, err := os.ReadFile(filepath.Join(pluginRoot, ".claude-plugin", "plugin.json"))
+	require.NoError(t, err)
+	expected, err := os.ReadFile(filepath.Join("testdata", "plugin-with-mcp.json"))
+	require.NoError(t, err)
+	assert.JSONEq(t, strings.ReplaceAll(string(expected), "REGISTRY_ORIGIN", origin), string(actual))
+
+	return actual
 }
 
 // TestSyncCommandRunSyncSkillsWrapperStableAcrossRuns is a risk

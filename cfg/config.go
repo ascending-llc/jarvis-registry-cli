@@ -230,7 +230,9 @@ func validateBaseUrl(raw string) error {
 
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("not a valid URL: %s", err.Error())
+		// net/url parse errors can include the original URL and its credentials.
+		// Load supplies the field and config path without echoing that input.
+		return errors.New("not a valid URL")
 	}
 
 	isLocalHTTP := u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1")
