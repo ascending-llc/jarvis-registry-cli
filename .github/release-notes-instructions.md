@@ -32,11 +32,16 @@ support — not marketing language.
   than no specific.
 
 ## Categories (use these headings in order, omit empty ones)
-1. ⚠️ Breaking Changes & Upgrade Notes  ← always first if present
+1. ⚠️ Breaking Changes & Upgrade Notes
 2. ✨ Features
 3. 🐛 Bug Fixes
 4. 🔧 Refactoring & Performance
 5. 🌍 Documentation
+
+Set each entry's `tag` to one heading exactly as written above, without the
+list number (for example, `✨ Features`). The action renders the headings in
+the order their tags first appear in `entries`, so emit `entries` grouped by
+category, in the order listed above: breaking changes always come first.
 
 A renamed or removed subcommand or flag, or a changed (renamed, removed, or
 re-interpreted) config key, counts as a ⚠️ Breaking Change: users' scripts and config
@@ -79,14 +84,21 @@ allowed `git` tool to inspect commits — but observe these rules:
 
 - Issue **one** `git <subcommand>` invocation per tool call. Do **not** wrap
   commands in bash constructs (no `for`/`while` loops, no `&&`, `;`, `|`,
-  `$(...)`, subshells, or `xargs`). Only bare `git ...` invocations are
-  permitted by the runner.
+  `$(...)`, subshells, or `xargs`), and do not prefix them with `cd`: the
+  working directory is already the repository. Only bare `git ...` invocations
+  are permitted by the runner.
+- **Never quote arguments.** A command containing `'` or `"` anywhere is denied
+  by the runner. Use `--oneline`, or an unquoted format such as `--format=%B` or
+  `--format=%h%x20%s` (`%x20` is a space).
 - If you need data about multiple commits, call `git` multiple times — once
   per commit — instead of looping.
-- Prefer cheap commands first: `git log -1 --format=%B <sha>`,
-  `git show --stat <sha>`, `git show <sha> -- <single-file>`.
+- Prefer cheap commands first: `git log --oneline <base>..<head>`,
+  `git log -1 --format=%B <sha>`, `git show --stat <sha>`,
+  `git show <sha> -- <single-file>`.
 - Avoid full diffs of large changes. If `git show --stat` reports a PR with
   more than ~500 changed lines, stick to the stat + commit message and the
   changed file list; do not request the full patch.
+- A "Permission denied" result means the command broke one of the rules above,
+  not that git is unavailable. Retry the same query in a permitted form.
 - If after one or two `git` calls you still cannot confidently describe the
   change, flag it as uncertain rather than guessing at specifics.

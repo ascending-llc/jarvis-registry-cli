@@ -51,9 +51,5 @@ lint-all:
 	@pre-commit run --all-files
 .PHONY: lint-all
 
-tartufo:
-	@pre-commit run --all-files tartufo
-.PHONY: tartufo
-
 all: test lint
 .PHONY: all
