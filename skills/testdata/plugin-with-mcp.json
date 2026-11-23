@@ -1,0 +1,11 @@
+{
+  "name": "jarvis-registry",
+  "description": "Jarvis Registry companion plugin for Claude Code",
+  "author": { "name": "ASCENDING Inc." },
+  "mcpServers": {
+    "jarvis-registry": {
+      "type": "http",
+      "url": "REGISTRY_ORIGIN/gateway/proxy/mcpgw/mcp"
+    }
+  }
+}

@@ -1,0 +1,3 @@
+registry:
+  base_url: "https://registry.example.com"
+  auth_base_url: "https://user:pw@auth.example.com"

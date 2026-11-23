@@ -3,6 +3,7 @@ package skills
 import (
 	"bytes"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -40,6 +41,29 @@ var (
 	//go:embed embedded/sync-skills-copilot-SKILL.md
 	syncSkillsSkillContentCopilot []byte
 )
+
+// renderPluginManifest adds the Registry MCP connection to the embedded plugin
+// metadata. registryOrigin must already be a bare origin without a trailing
+// slash, which cfg.Load guarantees for registry.base_url; it never carries
+// credentials into the distributed manifest.
+func renderPluginManifest(registryOrigin string) ([]byte, error) {
+	var manifest map[string]any
+
+	if err := json.Unmarshal(pluginManifestContent, &manifest); err != nil {
+		return nil, fmt.Errorf("failed to parse embedded plugin manifest: %s", err.Error())
+	}
+
+	manifest["mcpServers"] = map[string]map[string]string{
+		"jarvis-registry": {"type": "http", "url": registryOrigin + registryBasePath + "/proxy/mcpgw/mcp"},
+	}
+
+	content, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to render plugin manifest: %s", err.Error())
+	}
+
+	return append(content, '\n'), nil
+}
 
 // atomicWriteFile writes content to path by first writing a temp file in
 // the same directory and renaming it into place: os.Rename is a single,
@@ -82,16 +106,13 @@ func atomicWriteFile(path string, content []byte, perm os.FileMode) error {
 }
 
 // reconcilePluginManifest ensures <pluginRoot>/.claude-plugin/plugin.json
-// exists and matches pluginManifestContent exactly, atomically rewriting
+// exists and matches content exactly, atomically rewriting
 // it (creating .claude-plugin/ first if needed) whenever it doesn't.
-// created is true only when the file did not exist before this call —
-// that is the one signal, per Claude Code's documented behavior ("loaded
-// as a plugin ... on the next session"), that determines whether the
-// "restart your Claude Code session" banner is needed. A one-line stderr
-// notice is logged via stderrLogger only when overwriting
-// existing-but-different content, not on first creation, since that's
-// expected bootstrap rather than silent drift-correction.
-func reconcilePluginManifest(pluginRoot string, stderrLogger Logger) (created bool, err error) {
+// created identifies first-time delivery; changed reports any successful write,
+// including an upgrade or Registry URL change that requires a plugin reload.
+// The caller owns user-facing reload guidance for every changed write, so a
+// differing file is overwritten without a separate drift warning.
+func reconcilePluginManifest(pluginRoot string, content []byte) (created, changed bool, err error) {
 	dir := filepath.Join(pluginRoot, ".claude-plugin")
 	path := filepath.Join(dir, "plugin.json")
 
@@ -101,22 +122,20 @@ func reconcilePluginManifest(pluginRoot string, stderrLogger Logger) (created bo
 	case errors.Is(readErr, fs.ErrNotExist):
 		created = true
 	case readErr != nil:
-		return false, fmt.Errorf("failed to read plugin manifest at %s: %s", path, readErr.Error())
-	case bytes.Equal(existing, pluginManifestContent):
-		return false, nil
-	default:
-		stderrLogger.Printf("%s exists but was not managed by this CLI's current content; overwriting it", path)
+		return false, false, fmt.Errorf("failed to read plugin manifest at %s: %s", path, readErr.Error())
+	case bytes.Equal(existing, content):
+		return false, false, nil
 	}
 
 	if err = os.MkdirAll(dir, 0755); err != nil {
-		return false, fmt.Errorf("failed to create plugin manifest directory at %s: %s", dir, err.Error())
+		return false, false, fmt.Errorf("failed to create plugin manifest directory at %s: %s", dir, err.Error())
 	}
 
-	if err = atomicWriteFile(path, pluginManifestContent, 0644); err != nil {
-		return false, err
+	if err = atomicWriteFile(path, content, 0644); err != nil {
+		return false, false, err
 	}
 
-	return created, nil
+	return created, true, nil
 }
 
 // reconcileSyncSkillsWrapper rewrites <destDir>/sync-skills/SKILL.md from

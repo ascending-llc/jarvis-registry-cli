@@ -108,8 +108,10 @@ func (m SkillsMode) Valid() bool {
 }
 
 // Load reads config.yaml (or config.yml) from registryDir, unmarshals it
-// into a Config, and validates and resolves its fields — normalizing
-// Registry.BaseUrl and Local.Skills.SkipIds, defaulting Registry.AuthBaseUrl
+// into a Config, and validates and resolves its fields — requiring
+// Registry.BaseUrl and Registry.AuthBaseUrl to be origins (see
+// validateBaseUrl) with any trailing slash trimmed, normalizing
+// Local.Skills.SkipIds, defaulting Registry.AuthBaseUrl
 // to Registry.BaseUrl when it isn't set, and validating Local.Skills.Mode
 // when it's set. Credentials.FileOnly must be a YAML boolean when present.
 // It returns an error if neither file exists, the file
@@ -138,19 +140,22 @@ func Load(registryDir string) (config Config, err error) {
 		return config, fmt.Errorf("failed to parse config file at %s: %s", path, err.Error())
 	}
 
-	config.Registry.BaseUrl = strings.TrimSuffix(config.Registry.BaseUrl, "/")
-
+	// Validate before trimming: validateBaseUrl accepts only an empty or "/"
+	// path, so trimming one trailing slash afterwards always yields a bare
+	// origin that callers can append their own paths to.
 	if err = validateBaseUrl(config.Registry.BaseUrl); err != nil {
 		return config, fmt.Errorf("invalid registry.base_url in %s: %s", path, err.Error())
 	}
 
-	config.Registry.AuthBaseUrl = strings.TrimSuffix(config.Registry.AuthBaseUrl, "/")
+	config.Registry.BaseUrl = strings.TrimSuffix(config.Registry.BaseUrl, "/")
 
 	if config.Registry.AuthBaseUrl == "" {
 		config.Registry.AuthBaseUrl = config.Registry.BaseUrl
 	} else if err = validateBaseUrl(config.Registry.AuthBaseUrl); err != nil {
 		return config, fmt.Errorf("invalid registry.auth_base_url in %s: %s", path, err.Error())
 	}
+
+	config.Registry.AuthBaseUrl = strings.TrimSuffix(config.Registry.AuthBaseUrl, "/")
 
 	config.Local.Skills.SkipIds, err = normalizeSkipIds(config.Local.Skills.SkipIds)
 	if err != nil {
@@ -220,9 +225,11 @@ func resolveConfigPath(registryDir string) (path string, existed bool, err error
 	return path, false, nil
 }
 
-// validateBaseUrl requires raw to be a well-formed URL with an https scheme
-// and a non-empty host. As an exception for local testing, http is also
-// accepted when the host is "localhost" or "127.0.0.1", at any port.
+// validateBaseUrl requires raw to be a well-formed origin: an https scheme, a
+// non-empty host, and an optional port, with no credentials, path (other than
+// a single trailing "/"), query, or fragment. As an exception for local
+// testing, http is also accepted when the host is "localhost" or "127.0.0.1",
+// at any port. Errors never echo raw, since it may embed credentials.
 func validateBaseUrl(raw string) error {
 	if raw == "" {
 		return errors.New("URL must not be empty")
@@ -230,7 +237,9 @@ func validateBaseUrl(raw string) error {
 
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("not a valid URL: %s", err.Error())
+		// net/url parse errors can include the original URL and its credentials.
+		// Load supplies the field and config path without echoing that input.
+		return errors.New("not a valid URL")
 	}
 
 	isLocalHTTP := u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1")
@@ -238,8 +247,25 @@ func validateBaseUrl(raw string) error {
 		return fmt.Errorf("scheme must be https, or http for localhost/127.0.0.1, got %q", u.Scheme)
 	}
 
-	if u.Host == "" {
+	if u.Hostname() == "" {
 		return errors.New("URL must include a host")
+	}
+
+	if u.User != nil {
+		return errors.New("URL must not include credentials")
+	}
+
+	if (u.Path != "" && u.Path != "/") || u.RawPath != "" {
+		return errors.New("URL must be an origin without a path, such as https://registry.example.com")
+	}
+
+	if u.RawQuery != "" || u.ForceQuery {
+		return errors.New("URL must not include a query")
+	}
+
+	// url.Parse drops an empty fragment ("https://host#"), so check the raw input.
+	if strings.Contains(raw, "#") {
+		return errors.New("URL must not include a fragment")
 	}
 
 	return nil

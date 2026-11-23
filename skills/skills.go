@@ -356,8 +356,8 @@ func (c *SyncCommand) Run() (err error) {
 		return fmt.Errorf("failed to create sync root at %s: %s", c.syncRoot, err.Error())
 	}
 
-	// reconcile the CLI-owned plugin manifest (claude mode only — codex and
-	// copilot have no plugin.json concept). firstTime is the "was this
+	// Reconcile the CLI-owned plugin manifest (Claude mode only; the other
+	// modes use this CLI's flat skill layout). firstTime is the "was this
 	// genuinely the first sync into this destination" signal that drives the
 	// summary banner: plugin.json's non-existence for claude, the manifest's
 	// own non-existence otherwise. c.mrw.Exists() must be read before
@@ -365,8 +365,19 @@ func (c *SyncCommand) Run() (err error) {
 	var firstTime bool
 
 	if c.mode == cfg.SkillsModeClaude {
-		if firstTime, err = reconcilePluginManifest(c.syncRoot, c.stderrLogger); err != nil {
+		pluginContent, renderErr := renderPluginManifest(c.baseUrl)
+		if renderErr != nil {
+			return renderErr
+		}
+
+		var pluginChanged bool
+
+		if firstTime, pluginChanged, err = reconcilePluginManifest(c.syncRoot, pluginContent); err != nil {
 			return err
+		}
+
+		if pluginChanged {
+			c.stderrLogger.Printf("Registry MCP connection delivered in %s. Reload the plugin or start a new Claude Code session, then use /mcp to complete MCP OAuth if prompted; CLI login does not authenticate this connection.", c.syncRoot)
 		}
 	} else {
 		firstTime = !c.mrw.Exists()
@@ -936,10 +947,10 @@ func (c *SyncCommand) deleteMany(specs []SyncSpec) error {
 // printSummary prints, via c.logger, a scope line for Codex/Copilot, the
 // first-time sync banner (only when firstTime is true), then the sync
 // summary table. For claude mode firstTime tracks a brand-new
-// .claude-plugin/plugin.json — the one condition Claude Code's docs
-// confirm needs a new session, decoupled from whether c.destDir itself
-// happened to already exist; for codex/copilot it tracks the manifest's
-// own first appearance in the destination.
+// .claude-plugin/plugin.json, decoupled from whether c.destDir itself
+// happened to already exist. Connection reload guidance is emitted immediately
+// after each plugin manifest change. For codex/copilot firstTime tracks the
+// manifest's own first appearance in the destination.
 func (c *SyncCommand) printSummary(firstTime bool, toCreate []SyncSpec, createOutcomes []SyncOutcome, toUpdate []SyncSpec, updateOutcomes []SyncOutcome, toDelete []SyncSpec, skipped []skippedSkill, links []linkOutcome) {
 	if c.mode != cfg.SkillsModeClaude {
 		scope := "project"
