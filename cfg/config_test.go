@@ -21,6 +21,7 @@ func TestLoadValid(t *testing.T) {
 		{name: "valid-http-127-url", wantBaseUrl: "http://127.0.0.1:3000", wantAuthBaseUrl: "http://127.0.0.1:3000"},
 		{name: "valid-explicit-auth-base-url", wantBaseUrl: "https://registry.example.com", wantAuthBaseUrl: "https://auth.example.com"},
 		{name: "valid-local-auth-base-url", wantBaseUrl: "https://registry.example.com", wantAuthBaseUrl: "http://localhost:8888"},
+		{name: "valid-auth-base-url-trailing-slash", wantBaseUrl: "https://registry.example.com", wantAuthBaseUrl: "http://localhost:8888"},
 		{name: "valid-skip-ids", wantBaseUrl: "https://example.com", wantAuthBaseUrl: "https://example.com", wantSkipIds: []string{"skill-id-1", "not-an-object-id"}},
 	}
 
@@ -112,6 +113,17 @@ func TestLoadInvalid(t *testing.T) {
 		wantErrText     string
 		wantErrContains []string
 	}{
+		{name: "invalid-base-url-credentials", wantErrText: "invalid registry.base_url", wantErrContains: []string{"must not include credentials"}},
+		{name: "invalid-base-url-path", wantErrText: "invalid registry.base_url", wantErrContains: []string{"origin without a path"}},
+		{name: "invalid-base-url-double-slash", wantErrText: "invalid registry.base_url", wantErrContains: []string{"origin without a path"}},
+		{name: "invalid-base-url-escaped-path", wantErrText: "invalid registry.base_url", wantErrContains: []string{"origin without a path"}},
+		{name: "invalid-base-url-query", wantErrText: "invalid registry.base_url", wantErrContains: []string{"must not include a query"}},
+		{name: "invalid-base-url-empty-query", wantErrText: "invalid registry.base_url", wantErrContains: []string{"must not include a query"}},
+		{name: "invalid-base-url-fragment", wantErrText: "invalid registry.base_url", wantErrContains: []string{"must not include a fragment"}},
+		{name: "invalid-base-url-empty-fragment", wantErrText: "invalid registry.base_url", wantErrContains: []string{"must not include a fragment"}},
+		{name: "invalid-base-url-port-only", wantErrText: "invalid registry.base_url", wantErrContains: []string{"must include a host"}},
+		{name: "invalid-auth-base-url-path", wantErrText: "invalid registry.auth_base_url", wantErrContains: []string{"origin without a path"}},
+		{name: "invalid-auth-base-url-credentials", wantErrText: "invalid registry.auth_base_url", wantErrContains: []string{"must not include credentials"}},
 		{name: "invalid-http-scheme-url", wantErrText: "scheme must be https"},
 		{name: "invalid-http-localhost-lookalike-host", wantErrText: "scheme must be https"},
 		{name: "invalid-auth-base-url", wantErrText: "invalid registry.auth_base_url"},
@@ -130,6 +142,8 @@ func TestLoadInvalid(t *testing.T) {
 			for _, want := range c.wantErrContains {
 				assert.Contains(t, err.Error(), want, "error message should also contain %q", want)
 			}
+
+			assert.NotContains(t, err.Error(), "pw@", "error message must not echo URL credentials")
 		})
 	}
 }

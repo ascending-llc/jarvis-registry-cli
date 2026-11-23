@@ -306,7 +306,7 @@ func destinationsForMode(mode cfg.SkillsMode, projectPath string) (syncRoot, des
 	return root, filepath.Join(root, "skills")
 }
 
-// Run validates Claude's plugin origin, rejects aliased personal content/link directories, resolves a
+// Run rejects aliased personal content/link directories, resolves a
 // Registry access token, then reconciles the local skills
 // folder against the Registry: skills no longer accessible are deleted,
 // existing skills are updated in place, and new skills are created,
@@ -318,18 +318,6 @@ func destinationsForMode(mode cfg.SkillsMode, projectPath string) (syncRoot, des
 // command's own exit code/output is the only signal of a partial
 // failure — nothing is silently swallowed.
 func (c *SyncCommand) Run() (err error) {
-	apiBaseURL := c.baseUrl + registryBasePath
-
-	var pluginContent []byte
-
-	if c.mode == cfg.SkillsModeClaude {
-		if pluginContent, err = renderPluginManifest(c.baseUrl); err != nil {
-			return err
-		}
-
-		apiBaseURL = strings.TrimSuffix(c.baseUrl, "/") + registryBasePath
-	}
-
 	if c.personalScope {
 		if _, err = c.checkUserScopeSkillsDir(); err != nil {
 			return err
@@ -342,7 +330,7 @@ func (c *SyncCommand) Run() (err error) {
 		return fmt.Errorf("failed to get Registry access token: %s", err.Error())
 	}
 
-	if c.client, err = NewClient(apiBaseURL, token); err != nil {
+	if c.client, err = NewClient(c.baseUrl+registryBasePath, token); err != nil {
 		return fmt.Errorf("failed to create Registry client: %s", err.Error())
 	}
 
@@ -377,9 +365,14 @@ func (c *SyncCommand) Run() (err error) {
 	var firstTime bool
 
 	if c.mode == cfg.SkillsModeClaude {
+		pluginContent, renderErr := renderPluginManifest(c.baseUrl)
+		if renderErr != nil {
+			return renderErr
+		}
+
 		var pluginChanged bool
 
-		if firstTime, pluginChanged, err = reconcilePluginManifest(c.syncRoot, pluginContent, c.stderrLogger); err != nil {
+		if firstTime, pluginChanged, err = reconcilePluginManifest(c.syncRoot, pluginContent); err != nil {
 			return err
 		}
 

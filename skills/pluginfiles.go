@@ -7,10 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/ascending-llc/jarvis-registry-cli/cfg"
 )
@@ -45,32 +43,18 @@ var (
 )
 
 // renderPluginManifest adds the Registry MCP connection to the embedded plugin
-// metadata. Only a deployment origin is accepted: credentials and URL suffixes
-// must never be copied into the distributed manifest. Parse errors deliberately
-// omit their cause because net/url errors can repeat the input URL.
+// metadata. registryOrigin must already be a bare origin without a trailing
+// slash, which cfg.Load guarantees for registry.base_url; it never carries
+// credentials into the distributed manifest.
 func renderPluginManifest(registryOrigin string) ([]byte, error) {
-	u, err := url.Parse(registryOrigin)
-	if err != nil {
-		return nil, errors.New("invalid registry.base_url for Claude Code: expected a deployment origin")
-	}
-
-	localHTTP := u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1")
-	if (u.Scheme != "https" && !localHTTP) || u.Hostname() == "" ||
-		u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(registryOrigin, "#") ||
-		(u.Path != "" && u.Path != "/") || u.RawPath != "" {
-		return nil, errors.New("invalid registry.base_url for Claude Code: use an HTTPS origin (or HTTP localhost/127.0.0.1) without credentials, a path, query, or fragment")
-	}
-
-	u.Path = registryBasePath + "/proxy/mcpgw/mcp"
-
 	var manifest map[string]any
 
-	if err = json.Unmarshal(pluginManifestContent, &manifest); err != nil {
+	if err := json.Unmarshal(pluginManifestContent, &manifest); err != nil {
 		return nil, fmt.Errorf("failed to parse embedded plugin manifest: %s", err.Error())
 	}
 
 	manifest["mcpServers"] = map[string]map[string]string{
-		"jarvis-registry": {"type": "http", "url": u.String()},
+		"jarvis-registry": {"type": "http", "url": registryOrigin + registryBasePath + "/proxy/mcpgw/mcp"},
 	}
 
 	content, err := json.MarshalIndent(manifest, "", "  ")
@@ -126,7 +110,9 @@ func atomicWriteFile(path string, content []byte, perm os.FileMode) error {
 // it (creating .claude-plugin/ first if needed) whenever it doesn't.
 // created identifies first-time delivery; changed reports any successful write,
 // including an upgrade or Registry URL change that requires a plugin reload.
-func reconcilePluginManifest(pluginRoot string, content []byte, stderrLogger Logger) (created, changed bool, err error) {
+// The caller owns user-facing reload guidance for every changed write, so a
+// differing file is overwritten without a separate drift warning.
+func reconcilePluginManifest(pluginRoot string, content []byte) (created, changed bool, err error) {
 	dir := filepath.Join(pluginRoot, ".claude-plugin")
 	path := filepath.Join(dir, "plugin.json")
 
@@ -139,8 +125,6 @@ func reconcilePluginManifest(pluginRoot string, content []byte, stderrLogger Log
 		return false, false, fmt.Errorf("failed to read plugin manifest at %s: %s", path, readErr.Error())
 	case bytes.Equal(existing, content):
 		return false, false, nil
-	default:
-		stderrLogger.Printf("%s exists but was not managed by this CLI's current content; overwriting it", path)
 	}
 
 	if err = os.MkdirAll(dir, 0755); err != nil {

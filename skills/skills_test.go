@@ -30,10 +30,6 @@ import (
 
 type (
 	MockTokenProvider struct{}
-
-	countingTokenProvider struct {
-		calls int
-	}
 )
 
 const (
@@ -42,12 +38,6 @@ const (
 
 func (tp MockTokenProvider) GetAccessToken() (string, error) {
 	return mockBearerToken, nil
-}
-
-func (tp *countingTokenProvider) GetAccessToken() (string, error) {
-	tp.calls++
-
-	return "", errors.New("unexpected token lookup in invalid-origin test")
 }
 
 func TestIsSafeSkillName(t *testing.T) {
@@ -1419,32 +1409,30 @@ func TestSyncCommandRunDeliversPluginMCP(t *testing.T) {
 	ts, _ := newSingleSkillTestServer(t, "plugin-1", "test-skill", 1, Content{Description: "A test skill", Body: "Some body.\n"}, false)
 
 	for _, scope := range []string{"personal", "project"} {
-		for _, suffix := range []string{"", "/"} {
-			t.Run(scope+"/origin"+suffix, func(t *testing.T) {
-				cmd, _, _ := newTestSyncSetup(t, ts)
-				if scope == "personal" {
-					cmd.ProjectPath = ""
-					require.NoError(t, cmd.AfterApply())
-					cmd.tp = MockTokenProvider{}
-				}
+		t.Run(scope, func(t *testing.T) {
+			cmd, _, _ := newTestSyncSetup(t, ts)
+			if scope == "personal" {
+				cmd.ProjectPath = ""
+				require.NoError(t, cmd.AfterApply())
+				cmd.tp = MockTokenProvider{}
+			}
 
-				cmd.baseUrl = ts.URL + suffix
-				cmd.authBaseUrl = "https://auth.example.com"
+			cmd.baseUrl = ts.URL
+			cmd.authBaseUrl = "https://auth.example.com"
 
-				var notices bytes.Buffer
+			var notices bytes.Buffer
 
-				cmd.stderrLogger = log.New(&notices, "", 0)
-				require.NoError(t, cmd.Run())
+			cmd.stderrLogger = log.New(&notices, "", 0)
+			require.NoError(t, cmd.Run())
 
-				actual := assertPluginMCPManifest(t, cmd.syncRoot, ts.URL)
-				assert.NotContains(t, string(actual), mockBearerToken)
-				assert.NotContains(t, string(actual), cmd.authBaseUrl)
-				assert.Contains(t, notices.String(), "Reload the plugin or start a new Claude Code session")
-				assert.Contains(t, notices.String(), "MCP OAuth")
-				assert.Contains(t, notices.String(), cmd.syncRoot)
-				assert.FileExists(t, filepath.Join(cmd.destDir, reservedSyncSkillsName, "SKILL.md"))
-			})
-		}
+			actual := assertPluginMCPManifest(t, cmd.syncRoot, ts.URL)
+			assert.NotContains(t, string(actual), mockBearerToken)
+			assert.NotContains(t, string(actual), cmd.authBaseUrl)
+			assert.Contains(t, notices.String(), "Reload the plugin or start a new Claude Code session")
+			assert.Contains(t, notices.String(), "MCP OAuth")
+			assert.Contains(t, notices.String(), cmd.syncRoot)
+			assert.FileExists(t, filepath.Join(cmd.destDir, reservedSyncSkillsName, "SKILL.md"))
+		})
 	}
 }
 
@@ -1461,6 +1449,7 @@ func TestSyncCommandRunReconcilesPluginMCP(t *testing.T) {
 	require.NoError(t, cmd.Run(), "an existing skills-only plugin should upgrade")
 	first := assertPluginMCPManifest(t, cmd.syncRoot, ts.URL)
 	assert.Contains(t, notices.String(), "Reload the plugin")
+	assert.NotContains(t, notices.String(), "not managed by this CLI", "an expected upgrade must not be reported as drift")
 	assert.NotContains(t, summary.String(), "First time skill sync")
 
 	path := filepath.Join(cmd.syncRoot, ".claude-plugin", "plugin.json")
@@ -1481,48 +1470,7 @@ func TestSyncCommandRunReconcilesPluginMCP(t *testing.T) {
 	assertPluginMCPManifest(t, cmd.syncRoot, other.URL)
 	assert.Contains(t, notices.String(), "Reload the plugin")
 	assert.Contains(t, notices.String(), "MCP OAuth")
-}
-
-func TestSyncCommandRunRejectsUnsafePluginOrigin(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("invalid origins must fail before Registry HTTP requests")
-	}))
-	t.Cleanup(ts.Close)
-
-	for _, origin := range []string{
-		"", "not-a-url", "https://", "https://user:private-value@example.com",
-		"https://user@example.com", "https://example.com/gateway", "https://example.com//",
-		"https://example.com/%2F", "https://example.com?secret=private-value", "https://example.com?",
-		"https://example.com#private-value", "https://example.com#", "https://user:private-value@%zz",
-		"http://example.com", "ftp://example.com",
-	} {
-		t.Run(origin, func(t *testing.T) {
-			cmd, _, registryDir := newTestSyncSetup(t, ts)
-			cmd.baseUrl = origin
-			tp := &countingTokenProvider{}
-			cmd.tp = tp
-
-			var output bytes.Buffer
-
-			cmd.logger = log.New(&output, "", 0)
-			cmd.stderrLogger = log.New(&output, "", 0)
-			err := cmd.Run()
-			require.ErrorContains(t, err, "registry.base_url")
-			assert.Zero(t, tp.calls, "invalid plugin origins must fail before token lookup")
-			assert.NotContains(t, err.Error(), "private-value", "errors must not echo URL credentials")
-
-			if origin != "" {
-				assert.NotContains(t, err.Error(), origin)
-			}
-
-			assert.Empty(t, output.String())
-			assert.NoDirExists(t, cmd.syncRoot)
-
-			entries, readErr := os.ReadDir(registryDir)
-			require.NoError(t, readErr)
-			assert.Empty(t, entries, "invalid origins must fail before lock files or other writes")
-		})
-	}
+	assert.NotContains(t, notices.String(), "not managed by this CLI", "a Registry origin change must not be reported as drift")
 }
 
 func TestSyncCommandRunPluginNoticeSurvivesSkillsFailure(t *testing.T) {

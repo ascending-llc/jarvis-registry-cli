@@ -55,9 +55,7 @@ Personal skills are stored under `~/.claude/skills/jarvis-registry/` and invoked
 
 The same sync also delivers the Jarvis Registry MCP connection in the plugin's
 `.claude-plugin/plugin.json`. The MCP URL uses `registry.base_url` plus
-`/gateway/proxy/mcpgw/mcp`. For Claude mode, configure an origin such as
-`https://registry.acme.example.com`, optionally with a trailing slash; credentials,
-paths, query strings, and fragments are rejected before login or file changes.
+`/gateway/proxy/mcpgw/mcp`.
 
 After the first sync, or whenever the plugin definition changes, reload the plugin or start a new
 Claude Code session. Open `/mcp`, select the Registry connection, and complete its OAuth login if
@@ -177,6 +175,10 @@ The config file is stored at `~/.jarvis-registry/config.yaml`.
 | `local.skills.mode` | `configure` | unless `--mode` is passed | Default mode: `claude`, `codex`, or `copilot`. |
 | `local.skills.skip_ids` | hand-edit | no | Registry skill IDs that must not be created, updated, or retained locally. |
 | `local.skills.link.override` | hand-edit | no | Replace personal-scope Codex/Copilot entries that collide with desired skill names. Defaults to `false`. |
+
+Both Registry URLs must be origins: `https`, or `http` for `localhost`/`127.0.0.1`, with an optional
+port and trailing slash. Every command rejects credentials, paths, query strings, and fragments in
+either field when it loads the configuration.
 
 Use `local.skills.skip_ids` when you maintain a personal copy of a published Registry skill and want
 to skip the duplicate by its Registry ID.
