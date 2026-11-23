@@ -84,6 +84,7 @@ winget:
     publisher: ASCENDING
     publisher_url: "https://ascendingdc.com"
     publisher_support_url: "https://github.com/ascending-llc/jarvis-registry-cli/issues/new"
+    privacy_url: "https://app.termly.io/policy-viewer/policy.html?policyUUID=0c91586e-1d8d-489e-83af-70b343467a34"
     package_identifier: Ascending.JarvisRegistryCLI
     short_description: "Companion CLI for the Jarvis Registry platform."
     license: "Apache-2.0"
