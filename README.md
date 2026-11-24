@@ -1,8 +1,8 @@
 # jarvis-registry-cli
 
-Jarvis Registry CLI shares private AI skill packages from [Jarvis Skill Gateway](https://jarvisregistry.com/features/skill-gateway/) with Claude Code, Codex, Cursor and GitHub Copilot. Maintainers review skills in Git and import the approved revision into Registry. Developers sign in and sync the packages they can access into their coding tools.
+Jarvis Registry CLI shares private AI skill packages from [Jarvis Skill Gateway](https://jarvisregistry.com/features/skill-gateway/) with Claude Code, Codex, Cursor and GitHub Copilot. Maintainers can create and edit skills directly in Jarvis Registry, import them from a Git repository, or use both workflows in the same catalog. Developers sign in and sync their accessible skills to their coding tools.
 
-Use this route when different developers or groups need access to individual skills in a private catalog. For a local folder or repository whose existing sharing process already meets your needs, a separate Registry may be unnecessary. Jarvis controls retrieval of its imported packages; source-repository access and live tool permissions remain separate.
+Use this route when different developers or groups need access to individual skills in a private catalog. For a local folder or repository whose existing sharing process already meets your needs, a separate Registry may be unnecessary. Registry controls who can retrieve each package. For Git-backed skills, repository access is managed separately. Permissions to use live tools are also managed separately.
 
 See [sharing one package across Claude Code, Codex and Cursor](#share-one-private-skill-across-claude-code-codex-and-cursor) for the project layouts and checks.
 
@@ -80,9 +80,14 @@ links for project-scope commands, skill locations, invocation names, and advance
 
 ## Share one private skill across Claude Code, Codex and Cursor
 
-Use the same reviewed package in all three clients. Jarvis Skill Gateway keeps the imported package and its access grants in Registry; `jarvis-registry skills sync` delivers the signed-in developer's accessible, enabled skills to the chosen local layout. The client still has to discover and load those files.
+Use the same skill in all three clients. Whether you created the skill in Registry or imported it from Git, `jarvis-registry skills sync` delivers the signed-in developer's accessible, enabled skills to the chosen local layout. The client still has to discover and load those files.
 
-Start with a test Registry and the [two-file release-note sample](https://jarvisregistry.com/walkthroughs/examples/skills/private-skill-samples.zip). Its `release-notes-check` package contains `SKILL.md` and `references/checklist.md`. The [private-skill lifecycle walkthrough](https://jarvisregistry.com/walkthroughs/private-skill-lifecycle/) explains how a maintainer imports the approved source commit, records the skill ID and Registry version, and gives a test developer Viewer access. Keep the source private to its owner for the two-account test. The sample is a reproducible exercise, not a report of completed client tests.
+Start with a test Registry and the [two-file release-note sample](https://jarvisregistry.com/walkthroughs/examples/skills/private-skill-samples.zip). Its `release-notes-check` package contains `SKILL.md` and `references/checklist.md`. Prepare revision 1 using either workflow:
+
+- **Create it in Registry.** In the [Registry editor](https://jarvisregistry.com/features/skill-gateway/#manage-skills-in-the-registry), create `release-notes-check` from the sample’s instructions and add `references/checklist.md` as a supporting file.
+- **Import it from Git.** Follow the [private-skill lifecycle walkthrough](https://jarvisregistry.com/walkthroughs/private-skill-lifecycle/) to import the sample from a reviewed commit. For the two-account test, keep the Git source private to its owner.
+
+Whichever path you use, record the skill ID and Registry version, enable the skill, and give the test developer Viewer access to the skill.
 
 After [installing and configuring the CLI](docs/setup.md), sign in to that Registry:
 
@@ -92,15 +97,15 @@ jarvis-registry auth login
 jarvis-registry auth status
 ```
 
-Use three new, empty projects. Project-scoped sync owns its destination directory and can remove files outside its tracked set. Decline takeover of an existing directory. This macOS/Linux example keeps the exercise separate from existing work:
+Use three new, empty projects. Project-scoped sync owns its destination directory and can remove files outside its tracked set. Decline takeover of an existing directory. On macOS or Linux, `skill_test_dir` holds the three temporary projects. Run the commands below in the same shell.
 
 ```sh
-p14_lab_root="$(mktemp -d)"
-mkdir "$p14_lab_root/claude" "$p14_lab_root/codex" "$p14_lab_root/cursor"
+skill_test_dir="$(mktemp -d)"
+mkdir "$skill_test_dir/claude" "$skill_test_dir/codex" "$skill_test_dir/cursor"
 
-jarvis-registry skills sync --mode claude "$p14_lab_root/claude"
-jarvis-registry skills sync --mode codex "$p14_lab_root/codex"
-jarvis-registry skills sync --mode codex "$p14_lab_root/cursor"
+jarvis-registry skills sync --mode claude "$skill_test_dir/claude"
+jarvis-registry skills sync --mode codex "$skill_test_dir/codex"
+jarvis-registry skills sync --mode codex "$skill_test_dir/cursor"
 ```
 
 Each command syncs the developer's accessible, enabled set, subject to CLI skip settings. It does not select only this sample. Limit the test identity to appropriate sample content.
@@ -113,9 +118,9 @@ Each command syncs the developer's accessible, enabled set, subject to CLI skip 
 
 This example uses the `codex` project layout, `.agents/skills/`, for Cursor. [Cursor also supports `.claude/skills/` compatibility](https://cursor.com/docs/skills); that is a separate route, not an additional sync step here. There is no separate `cursor` CLI mode. These are project-scope examples. Omitting the project path selects personal scope, whose layouts differ.
 
-In each project, inspect both sample files and the `skill-lock.json` manifest. Compare the recorded skill ID and Registry version with the imported package. The CLI reconstructs skill frontmatter, so verify meaningful metadata and supporting-file content rather than claiming that the generated `SKILL.md` is byte-for-byte identical to Git.
+In each project, inspect both sample files and the `skill-lock.json` manifest. Compare the recorded skill ID and version with the skill in Registry. The CLI reconstructs the frontmatter in `SKILL.md`, so check the skill name, instructions and supporting-file contents against the saved revision.
 
-Open each project in its coding client and explicitly invoke the sample. Claude Code uses `/jarvis-registry:release-notes-check`; Codex can select `release-notes-check` through `/skills` or `$release-notes-check`; Cursor can select it from `/` in Agent chat. Verify the supported client version and policy first. Claude Code's automatic plugin discovery requires [v2.1.157 or later](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21157); reload the plugin or start a fresh session after updates.
+Open each project in its coding client and explicitly invoke the sample. Claude Code uses `/jarvis-registry:release-notes-check`; Codex can select `release-notes-check` through `/skills` or `$release-notes-check`; Cursor can select it from `/` in Agent chat. Verify the supported client version and policy first. Claude Code's automatic plugin discovery requires [v2.1.157 or later](https://github.com/anthropics/claude-code/releases/tag/v2.1.157); reload the plugin or start a fresh session after updates.
 
 Use the same harmless note in all three clients:
 
@@ -124,7 +129,7 @@ Owner: Test Release Team
 Rollback: Restore the previous test configuration.
 ```
 
-Record discovery and invocation separately from the resulting text. Revision 1 checks those two items; revision 2 adds a verification-step check. Import the reviewed second revision, repeat the same syncs, inspect both updated files and the new Registry version, then invoke the sample again. An answer that sounds plausible by itself does not prove which package loaded.
+Record discovery and invocation separately from the resulting text. Revision 1 checks those two items. Revision 2 adds a verification-step check. For a Registry-authored skill, update the instructions and supporting file in the editor. For a Git-backed skill, import the second revision from the repository. Record the new version in Registry, repeat the three sync commands in the same projects, inspect both updated files, and invoke the skill again. An answer that sounds plausible by itself does not prove which package loaded.
 
 Finally, compare an allowed developer with an authenticated developer who lacks every effective grant on the skill. Use separate test OS accounts or isolated environments so cached credentials do not mix. After removing the allowed developer's access, verify blocked Registry retrieval and then a successful sync removing the managed copy. Independently saved files and already-loaded client content require separate handling.
 
