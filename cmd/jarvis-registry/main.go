@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+
 	"github.com/alecthomas/kong"
 
 	"github.com/ascending-llc/jarvis-registry-cli/auth"
@@ -27,6 +29,13 @@ func main() {
 		} `cmd:"" name:"auth" help:"Manage Registry authentication."`
 		Completion completion.Command `cmd:"" name:"completion" help:"Print a shell completion script to stdout."`
 		Version    kong.VersionFlag   `short:"v" help:"Print version and exit."`
+	}
+
+	// A bare invocation prints help and exits 0 rather than failing with kong's
+	// usage-error exit code (80), which package validators such as winget's
+	// treat as a broken executable.
+	if len(os.Args) == 1 {
+		os.Args = append(os.Args, "--help")
 	}
 
 	ctx := kong.Parse(
